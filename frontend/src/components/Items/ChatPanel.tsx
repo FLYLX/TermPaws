@@ -1145,6 +1145,19 @@ const TASK_STEP_STATUS_ICON: Record<string, string> = {
 }
 
 function ChatTaskStrip({ itemId }: { itemId: string }) {
+  const queryClient = useQueryClient()
+  const cancelPlan = async (ticketId: string) => {
+    const token = localStorage.getItem("access_token") || ""
+    try {
+      await fetch(
+        `${OpenAPI.BASE}/api/v1/items/${itemId}/plan/${ticketId}/cancel`,
+        { method: "POST", headers: { Authorization: `Bearer ${token}` } },
+      )
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: ["item-plan", itemId] })
+    }
+  }
+
   const planQuery = useQuery({
     queryKey: ["item-plan", itemId],
     queryFn: async () => {
@@ -1186,6 +1199,7 @@ function ChatTaskStrip({ itemId }: { itemId: string }) {
   )
     ? jobsQuery.data.jobs
     : []
+  const showJobsBlock = jobs.length > 0 || tasks.length > 0
   if (tasks.length === 0 && jobs.length === 0) {
     return null
   }
@@ -1214,6 +1228,18 @@ function ChatTaskStrip({ itemId }: { itemId: string }) {
               <span className="shrink-0 text-muted-foreground">
                 {done}/{total}
               </span>
+              <button
+                type="button"
+                title="取消该任务"
+                className="flex size-4 shrink-0 items-center justify-center rounded-full border bg-background text-muted-foreground hover:text-red-600"
+                onClick={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  void cancelPlan(String(task.ticket_id))
+                }}
+              >
+                <X className="size-3" />
+              </button>
             </summary>
             <div className="space-y-0.5 border-t px-2.5 py-1.5">
               {steps.map((step, index) => {
@@ -1238,9 +1264,16 @@ function ChatTaskStrip({ itemId }: { itemId: string }) {
           </details>
         )
       })}
-      {jobs.length > 0 ? (
-        <div className="space-y-1">
-          {jobs.map((job, index) => {
+      {showJobsBlock ? (
+        <div className="rounded-lg border bg-muted/20 px-2.5 py-1.5">
+          <div className="mb-1 font-semibold text-muted-foreground">
+            后台任务
+          </div>
+          {jobs.length === 0 ? (
+            <div className="text-muted-foreground">暂无后台任务</div>
+          ) : (
+            <div className="space-y-1">
+              {jobs.map((job, index) => {
             const command = String(job.command ?? "")
             const elapsed = Math.round(Number(job.elapsed_seconds ?? 0))
             const tailLines = String(job.output_tail ?? "")
@@ -1284,6 +1317,8 @@ function ChatTaskStrip({ itemId }: { itemId: string }) {
               </details>
             )
           })}
+            </div>
+          )}
         </div>
       ) : null}
     </div>
@@ -1343,6 +1378,34 @@ export function ChatPanel({ itemId }: ChatPanelProps) {
   const queryClient = useQueryClient()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
+  const inputHistoryRef = useRef<string[]>([])
+  const historyCursorRef = useRef(-1)
+  const historyDraftRef = useRef("")
+
+  const navigateInputHistory = (direction: 1 | -1) => {
+    const history = inputHistoryRef.current
+    if (history.length === 0) {
+      return
+    }
+    const cursor = historyCursorRef.current
+    if (direction === -1) {
+      // 向上（更早）
+      const next = Math.min(cursor + 1, history.length - 1)
+      if (cursor === -1) {
+        historyDraftRef.current = input
+      }
+      historyCursorRef.current = next
+      setInput(history[history.length - 1 - next])
+    } else {
+      // 向下（更近/草稿）
+      if (cursor === -1) {
+        return
+      }
+      const next = cursor - 1
+      historyCursorRef.current = next
+      setInput(next === -1 ? historyDraftRef.current : history[history.length - 1 - next])
+    }
+  }
   const [pendingImages, setPendingImages] = useState<string[]>([])
   const imageInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -1949,6 +2012,14 @@ export function ChatPanel({ itemId }: ChatPanelProps) {
     )
     setInput("")
     setPendingImages([])
+    if (messageText.trim()) {
+      inputHistoryRef.current = [
+        ...inputHistoryRef.current.slice(-99),
+        messageText,
+      ]
+    }
+    historyCursorRef.current = -1
+    historyDraftRef.current = ""
     setAgentStatus({
         text: "\u56de\u590d\u4e2d",
         kind: "replying",
@@ -2242,12 +2313,28 @@ export function ChatPanel({ itemId }: ChatPanelProps) {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault()
                 void sendMessage()
+              } else if (event.key === "ArrowUp") {
+                event.preventDefault()
+                navigateInputHistory(-1)
+              } else if (event.key === "ArrowDown") {
+                event.preventDefault()
+                navigateInputHistory(1)
               }
             }}
             placeholder={inputPlaceholder}
             disabled={!handler}
             className="flex-1"
           />
+          <Button
+            size="icon"
+            variant="outline"
+            title="中断当前任务（等同 Ctrl+C）"
+            onClick={() => void abortChat()}
+            disabled={!canAbortSession}
+            className="text-red-600 hover:bg-red-50 disabled:opacity-40"
+          >
+            <Square className="size-4" />
+          </Button>
           <Button
             size="icon"
             onClick={() => void sendMessage()}

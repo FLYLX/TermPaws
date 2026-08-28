@@ -372,7 +372,13 @@ class LocalMCPServer:
         )
         self.register_tool(
             name="execute_command",
-            description="在主终端前台执行命令。用于需要持续交互的进程（服务器、REPL、控制台）。一次只发一条命令。",
+            description=(
+                "在主终端前台执行命令：仅用于需要持续交互的进程（服务器、REPL、控制台）"
+                "或几秒内出结果的短命令。一次只发一条。"
+                "安装/下载/构建/编译等耗时任务禁止用本工具，必须用 mcp_local_run_job；"
+                "确实要在前台跑慢命令时，必须把 timeout_seconds 显式设够（如 600-1800），"
+                "默认 20 秒必超时。"
+            ),
             input_schema={
                 "type": "object",
                 "properties": {

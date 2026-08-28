@@ -1066,6 +1066,44 @@ def get_item_plan(
     }
 
 
+@router.post("/{id}/plan/{ticket_id}/cancel")
+def cancel_item_plan(
+    session: SessionDep,
+    current_user: CurrentUser,
+    id: uuid.UUID,
+    ticket_id: str,
+) -> dict[str, Any]:
+    """取消指定任务：票据标记取消，未完成步骤一并取消。"""
+    item = session.get(Item, id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    _check_item_permission(item, current_user)
+
+    from app.services.agent.reply_ticket import reply_ticket_manager
+
+    ticket = reply_ticket_manager.get(ticket_id)
+    if not ticket or ticket.item_id != str(id):
+        raise HTTPException(status_code=404, detail="Plan not found")
+    reply_ticket_manager.mark_failed(ticket_id, "用户取消了该任务")
+    with reply_ticket_manager._lock:
+        current = reply_ticket_manager._tickets.get(
+            reply_ticket_manager._resolve_ticket_id_locked(ticket_id)
+        )
+        if current and current.plan:
+            current.plan = [
+                {
+                    **step,
+                    "status": (
+                        step.get("status")
+                        if step.get("status") in {"completed", "cancelled"}
+                        else "cancelled"
+                    ),
+                }
+                for step in current.plan
+            ]
+    return {"success": True, "ticket_id": ticket_id}
+
+
 @router.get("/{id}/jobs")
 def list_item_jobs(
     session: SessionDep,

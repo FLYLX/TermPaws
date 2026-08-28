@@ -57,7 +57,16 @@ class SocketManager:
     def create_backend_socket(self, item_uuid: str, token: str, daemon_url: str, api_key: str) -> ItemSocket:
         existing_socket = self.get_backend_socket(item_uuid)
         if existing_socket:
-            if existing_socket.is_connected():
+            if existing_socket.token != token:
+                # token 变了（daemon 重启/终端重启发新 token）：旧 socket 已失效，
+                # 必须销毁重建，否则用旧 token 永远 auth_error（Room 抖动死循环的根）
+                logger.info(f"[SocketManager] Backend socket token changed for item={item_uuid}, recreating")
+                key = ("backend", item_uuid, "backend")
+                with self.lock:
+                    self.sockets.pop(key, None)
+                self._dispose_socket(existing_socket)
+                existing_socket = None
+            elif existing_socket.is_connected():
                 logger.info(f"[SocketManager] Backend socket already exists and connected for item={item_uuid}, reusing")
                 if not self._input_handler_registered(existing_socket):
                     self._register_input_handler(existing_socket)

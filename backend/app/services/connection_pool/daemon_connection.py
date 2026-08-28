@@ -30,7 +30,8 @@ class DaemonConnection:
         
         self.sio = socketio.Client(
             reconnection=True,
-            reconnection_attempts=5,
+            reconnection_attempts=0,  # 0=无限重连：daemon 重启/网络抖动后必须能自愈，
+            # 之前 5 次重试耗尽后永久死亡，导致命令永远"超时"（其实执行了但没回声）
             reconnection_delay=2,
             reconnection_delay_max=10,
             logger=False,

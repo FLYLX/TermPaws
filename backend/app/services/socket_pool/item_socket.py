@@ -64,6 +64,7 @@ class ItemSocket:
             self._connect_error = data
             self._connected_event.set()
             subscription_center.publish_auth_error(self.item_uuid, data)
+            threading.Thread(target=self._recover_auth, daemon=True).start()
 
         @self.sio.on(ProtocolEvents.STREAM)
         def on_stream(data):
@@ -127,6 +128,42 @@ class ItemSocket:
             })
         except Exception as exc:
             logger.error(f"[ItemSocket] Failed to emit terminal_connect: {exc}")
+
+    def _recover_auth(self) -> None:
+        """token 失效（daemon 重启清空内存 token 库）后的自愈：
+        走标准 restore 流程——从 daemon 拿当前 token 并重建订阅；终端死了就幂等重启。"""
+        try:
+            import uuid as _uuid
+
+            from sqlmodel import Session
+
+            from app.core.db import engine
+            from app.models import Item
+            from app.services import DaemonConfig, connection_manager, socket_pool_facade
+            from app.services.terminal_service import TerminalService
+
+            with Session(engine) as db:
+                item = db.get(Item, _uuid.UUID(str(self.item_uuid)))
+            if not item or not item.socket_host or not item.socket_port or not item.api_key:
+                return
+            daemon_config = DaemonConfig(item.socket_host, item.socket_port, item.api_key)
+            service = TerminalService(connection_manager, socket_pool_facade)
+            restored = service.restore_running_terminal(
+                item_uuid=self.item_uuid,
+                owner_uuid=str(item.owner_id),
+                daemon_config=daemon_config,
+            )
+            if restored:
+                logger.info(f"[ItemSocket] auth recovered via restore for item={self.item_uuid}")
+                return
+
+            started = service.start_terminal(self.item_uuid, str(item.owner_id), daemon_config)
+            if started.get("success"):
+                logger.info(f"[ItemSocket] auth recovered via terminal restart for item={self.item_uuid}")
+            else:
+                logger.warning(f"[ItemSocket] auth recovery start failed for item={self.item_uuid}: {started.get('error')}")
+        except Exception as exc:
+            logger.warning(f"[ItemSocket] auth recovery failed for item={self.item_uuid}: {exc}")
 
     def disconnect(self):
         try:

@@ -19,6 +19,9 @@ TICKET_TTL = timedelta(hours=6)
 # How long a ticket's plan stays visible to the /plan API after the ticket
 # was last touched (plan updates and turn activity refresh it).
 PLAN_LOOKUP_FRESH_SECONDS = 30 * 60
+# 计划条带的"僵尸"判定：票据状态正常但计划 N 秒没有任何推进（轮次已死），
+# 继续展示就是残留。长时间安装步骤会由后台 jobs 区兜底展示。
+PLAN_STALL_HIDE_SECONDS = 300.0
 # Fully-completed plans linger on the ticket for UI history, but the item
 # plan panel should drop them shortly after completion so finished tasks do
 # not occupy the current-plan table indefinitely.
@@ -585,14 +588,20 @@ class ReplyTicketManager:
         return ticket, list(ticket.plan)
 
     def active_plans_for_item(self, item_id: str) -> list[dict[str, Any]]:
-        """该 item 所有带计划的票据（多任务展示用），按更新时间倒序。"""
+        """该 item 所有未完成计划的票据（多任务展示用），按更新时间倒序。
+        全部步骤完成/取消的票据视为已完结，直接过滤掉——前端条带不残留。"""
         with self._lock:
             now = datetime.now()
             entries = []
             for ticket in self._tickets.values():
                 if ticket.item_id != str(item_id) or not ticket.plan:
                     continue
-                if (now - ticket.updated_at).total_seconds() > PLAN_LOOKUP_FRESH_SECONDS:
+                if ticket.status in {"delivered", "failed", "cancelled"}:
+                    continue
+                idle_seconds = (now - ticket.updated_at).total_seconds()
+                if idle_seconds > PLAN_LOOKUP_FRESH_SECONDS:
+                    continue
+                if idle_seconds > PLAN_STALL_HIDE_SECONDS:
                     continue
                 done = sum(
                     1

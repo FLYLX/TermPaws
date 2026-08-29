@@ -39,7 +39,10 @@ def ensure_loaded(item_id: str, *, tools: Iterable[str] = (), guides: Iterable[s
             if not name.strip():
                 continue
             entry["tools"].add(name)
-            entry["loaded_at"].setdefault(name, now)
+            # 每次 prepare 都刷新新鲜度：agent 显式 prepare 就是"我现在要用"
+            # 的声明。setdefault 会让老工具沉到 fresh 窗口末尾被挤出轮次
+            # 工具表，模型调用时拿到 unknown tool，误判"调用无响应"而空转。
+            entry["loaded_at"][name] = now
         entry["guides"].update(str(name) for name in guides if str(name).strip())
 
 

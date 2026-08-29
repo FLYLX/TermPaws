@@ -456,14 +456,10 @@ def _complete_confirmed_external_delivery(ticket_id: str) -> bool:
 def _ticket_has_open_plan_steps(ticket_id: str) -> bool:
     """票据的计划还有 pending/in_progress 步骤时，裸发送只是中间汇报，
     不能提前结束本轮（剩余步骤仍需继续跑）。"""
+    from app.services.agent.reply_ticket import plan_has_open_steps
+
     ticket = reply_ticket_manager.get(ticket_id)
-    if not ticket or not ticket.plan:
-        return False
-    return any(
-        str(step.get("status") or "").strip().lower() in {"pending", "in_progress"}
-        for step in ticket.plan
-        if isinstance(step, dict)
-    )
+    return bool(ticket) and plan_has_open_steps(ticket.plan)
 
 
 def _run_async_from_sync(coro_factory):
@@ -1118,12 +1114,14 @@ def _generate_stream_unserialized(
     confirmed_external_delivery_to_qq = False
     pending_async_delivery = False
     thinking_only_retry_used = False
+    plan_continuation_count = 0
     from app.core.config import settings as chat_settings
 
     turn_started_at = time.monotonic()
 
     try:
         for iteration_index in range(MAX_ITERATIONS + 1):
+            reply_ticket_manager.touch(reply_ticket.ticket_id)
             finalization_only = iteration_index == MAX_ITERATIONS
             iteration_tools = (
                 []
@@ -1362,6 +1360,27 @@ def _generate_stream_unserialized(
                 ordered_tool_calls = dsml_tool_calls
 
             if not ordered_tool_calls:
+                # 计划驱动推进：计划还有未完成步骤时轮次不能就这么结束——
+                # 由计划自身驱动继续执行，而不是靠 prompt 硬约束。
+                # 超过 5 次推进仍不行动才放行，防止死循环。
+                if (
+                    not finalization_only
+                    and _ticket_has_open_plan_steps(reply_ticket.ticket_id)
+                    and plan_continuation_count < 5
+                ):
+                    plan_continuation_count += 1
+                    messages.append({"role": "assistant", "content": iteration_content})
+                    messages.append(
+                        {
+                            "role": "system",
+                            "content": (
+                                "当前计划还有未完成步骤。不要总结、不要表态，"
+                                "立即调用工具继续执行当前 in_progress/pending 步骤；"
+                                "每完成一步用 mcp_local_update_plan 更新状态，全部完成后才总结收尾。"
+                            ),
+                        }
+                    )
+                    continue
                 final_response = strip_think_tags(guard_fabricated_tool_trace(iteration_content))
                 if finalization_only and not final_response:
                     break
@@ -1413,7 +1432,12 @@ def _generate_stream_unserialized(
                     message_type="agent_response",
                 )
                 yield _to_sse(response_event)
-                if reply_ticket.source_type != SOURCE_QQ:
+                # 计划未完成就标 delivered 会杀掉 plan 生命周期：
+                # 有未完成步骤的票据保持 pending，由 plan resume sweep 自动续跑。
+                if (
+                    reply_ticket.source_type != SOURCE_QQ
+                    and not _ticket_has_open_plan_steps(reply_ticket.ticket_id)
+                ):
                     reply_ticket_manager.mark_delivered(reply_ticket.ticket_id)
                 if not internal_agent_callback:
                     _append_conversation_memory(

@@ -489,6 +489,240 @@ class RobotService:
                     )
                 self._dispatch_queue.task_done()
 
+    def _reattach_pending_jobs(self, ticket, agent_session) -> bool:
+        """重启后接管票据上的后台 job：向 daemon 重新拉取结果。
+
+        已完成 → 复用正常投递链路注入结果输入（驱动计划前进）；
+        仍在跑 → 等下一轮 sweep；查不到 → 注入失败让计划换路继续。
+        返回 True 表示本轮已处理（无需再发通用 resume）。
+        """
+        from app.services.agent.mcp.local_server import (
+            flush_background_job_results_for_entries,
+            local_mcp_server,
+        )
+        from app.services.agent.reply_ticket import reply_ticket_manager
+
+        item_id = str(ticket.item_id or "")
+        try:
+            _item, connection = local_mcp_server._get_item_daemon_context(item_id)
+        except Exception:
+            logger.exception(
+                "[RobotService] Failed to get daemon context for job reattach: item=%s",
+                item_id,
+            )
+            return False
+        if connection is None:
+            return False
+
+        robot_job_context = None
+        if ticket.robot_id and ticket.reply_target:
+            robot_job_context = {
+                "robot_id": str(ticket.robot_id),
+                "sender_key": str(ticket.sender_key or ""),
+                "reply_target": ticket.reply_target,
+                "conversation_key": str(ticket.conversation_key or ""),
+                "conversation_generation": int(ticket.conversation_generation or 0),
+            }
+
+        entries = []
+        for job_id in list(ticket.pending_job_ids):
+            try:
+                poll = connection.get_job_result_http(item_uuid=item_id, job_id=job_id)
+            except Exception:
+                poll = {"success": False, "error": "fetch failed"}
+            status = str(poll.get("status") or "")
+            if poll.get("success") and status == "running":
+                continue
+            if (
+                poll.get("success")
+                and status == "finished"
+                and isinstance(poll.get("result"), dict)
+            ):
+                result = poll["result"]
+            else:
+                result = {
+                    "success": False,
+                    "error": "daemon job result unavailable (job lost or daemon restarted)",
+                    "command": str(ticket.command or ""),
+                    "job_id": job_id,
+                    "exit_code": None,
+                    "timed_out": False,
+                    "duration_seconds": "",
+                    "output_tail": "",
+                }
+            if not reply_ticket_manager.take_pending_job(ticket.ticket_id, job_id):
+                continue
+            entries.append(
+                {
+                    "command": str(ticket.command or ""),
+                    "result": result,
+                    "robot_job_context": robot_job_context,
+                    "pending_robot_reply_id": "",
+                    "reply_ticket_id": ticket.ticket_id,
+                    "feedback": local_mcp_server._format_background_job_feedback(
+                        result, reply_ticket_id=ticket.ticket_id
+                    ),
+                    "agent_session": agent_session,
+                    "conversation_key": str(ticket.conversation_key or ""),
+                }
+            )
+        if entries:
+            flush_background_job_results_for_entries(item_id, entries)
+            logger.info(
+                "[RobotService] Reattached %s finished job result(s) for ticket=%s item=%s",
+                len(entries),
+                ticket.ticket_id,
+                item_id,
+            )
+        return True
+
+    def _resume_open_plan_tickets(self) -> int:
+        """计划驱动自动续跑：找出"计划未完成 + 当前没有轮次"的票据，
+        自动起一个新轮次接着执行——这才是 plan 机制该有的生命周期，
+        不依赖用户说"继续"。空闲阈值防止在正常执行间隙误触发。
+        唯一判断条件是 plan 还有未完成步骤；票据 status 不参与
+        （delivered 只代表发过回复，不代表任务结束）。"""
+        from app.plugins.robot.contracts import RobotReplyTarget
+        from app.services.agent.integrations import (
+            clear_integration_chat_contexts,
+            setup_integration_chat_contexts,
+        )
+        from app.services.agent.reply_ticket import (
+            plan_has_open_steps,
+            reply_ticket_manager,
+        )
+        from app.services.agent.session import (
+            InputMessage,
+            InputType,
+            agent_session_manager,
+        )
+
+        resumed = 0
+        now = datetime.now()  # 与 ticket.updated_at 的 naive 本地时间对齐
+
+        def _idle_seconds(ticket) -> float:
+            updated = ticket.updated_at
+            if updated.tzinfo is not None:
+                updated = updated.replace(tzinfo=None)
+            return (now - updated).total_seconds()
+
+        with reply_ticket_manager._lock:
+            tickets = [
+                t
+                for t in reply_ticket_manager._tickets.values()
+                if (plan_has_open_steps(t.plan) or t.pending_job_ids)
+                and _idle_seconds(t) > 90
+            ]
+        for ticket in tickets:
+            conversation_key = str(ticket.conversation_key or "")
+            robot_id = str(ticket.robot_id or "")
+            item_id = str(ticket.item_id or "")
+            if not item_id:
+                continue
+            is_robot_ticket = bool(conversation_key and robot_id)
+            try:
+                robot = None
+                if is_robot_ticket:
+                    if self.conversation_has_active_dispatch(robot_id, conversation_key):
+                        continue
+                    with Session(engine) as session:
+                        robot = session.get(Robot, uuid.UUID(robot_id))
+                    if robot is None or not robot.is_enabled:
+                        continue
+
+                open_steps = [
+                    str(step.get("step") or "")
+                    for step in ticket.plan
+                    if str(step.get("status")) not in {"completed", "cancelled"}
+                ]
+                from app.services.agent.session import SessionState
+
+                handler_id = str(ticket.handler_id or "")
+                agent_session = agent_session_manager.get_or_create_session(
+                    item_id, handler_id
+                )
+                # 会话正忙（轮次运行中或队列里有待处理输入）就不要再塞
+                # resume——否则长 LLM 思考间隙的 90s 空闲会反复触发，
+                # 多个 resume 排队串行执行导致任务被重做。
+                if (
+                    agent_session.state == SessionState.RUNNING
+                    or agent_session.input_queue.qsize() > 0
+                ):
+                    continue
+                agent = agent_session.get_agent()
+                if agent is None:
+                    continue
+
+                # 进程重启会杀死后台 job 的轮询线程，结果永远送不回来。
+                # 按票据上持久化的 job_id 重新向 daemon 拉取并注入结果，
+                # 让任务链断线重连；仍在跑的 job 就等下一轮 sweep。
+                if ticket.pending_job_ids and self._reattach_pending_jobs(
+                    ticket, agent_session
+                ):
+                    continue
+                # 纯 job 票据（无计划）结果注入后即可，不做计划续跑。
+                if not plan_has_open_steps(ticket.plan):
+                    continue
+
+                reply_target = RobotReplyTarget.model_validate(ticket.reply_target) if ticket.reply_target else None
+                if reply_target is not None:
+                    contexts = {
+                        "robot": {
+                            "robot_id": robot_id,
+                            "sender_key": str(ticket.sender_key or ""),
+                            "reply_target": reply_target,
+                            "conversation_key": conversation_key,
+                            "conversation_generation": int(ticket.conversation_generation or 0),
+                            "reply_requires_awake": self._reply_context_window_seconds(robot) > 0,
+                        }
+                    }
+                    setup_integration_chat_contexts(agent, contexts)
+                try:
+                    agent_session.process_input(
+                        InputMessage(
+                            input_type=InputType.CHAT,
+                            content=(
+                                "[Internal plan resume]\n"
+                                f"当前任务计划还有未完成步骤：{'; '.join(open_steps) or '见计划'}。"
+                                "不要总结、不要表态，立即调用工具继续执行当前步骤；"
+                                "每完成一步用 mcp_local_update_plan 更新状态，全部完成后才总结。"
+                            ),
+                            raw_content="",
+                            query="resume plan",
+                            reply_ticket_id=ticket.ticket_id,
+                            source_label=f"plan-resume {conversation_key or item_id}",
+                        )
+                    )
+                    resumed += 1
+                    if robot_id:
+                        record_robot_event(
+                            robot_id,
+                            direction="backend_queue",
+                            event="plan_resume_kicked",
+                            payload={
+                                "ticket_id": ticket.ticket_id,
+                                "conversation": conversation_key,
+                                "open_steps": len(open_steps),
+                            },
+                        )
+                    else:
+                        logger.info(
+                            "[RobotService] Plan resume kicked for web ticket=%s item=%s open_steps=%s",
+                            ticket.ticket_id,
+                            item_id,
+                            len(open_steps),
+                        )
+                finally:
+                    if reply_target is not None:
+                        clear_integration_chat_contexts(agent, contexts)
+            except Exception:
+                logger.exception(
+                    "[RobotService] Failed to resume plan ticket=%s conversation=%s",
+                    ticket.ticket_id,
+                    conversation_key,
+                )
+        return resumed
+
     def sweep_pending_conversations(self) -> dict[str, int]:
         """Global invariant: no active LLM turn + pending input -> start a turn.
 
@@ -500,6 +734,10 @@ class RobotService:
         never force concurrent turns on one conversation.
         """
         stats = {"pending_turns_kicked": 0, "buffered_results_flushed": 0}
+        try:
+            stats["plan_resumed"] = self._resume_open_plan_tickets()
+        except Exception:
+            logger.exception("[RobotService] plan resume sweep failed")
         with self._lock:
             pending_keys = [
                 (robot_id, conversation_key)

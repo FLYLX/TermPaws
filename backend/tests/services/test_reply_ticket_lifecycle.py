@@ -392,6 +392,79 @@ def test_watchdog_closes_stale_orphan_qq_ticket(monkeypatch) -> None:
         unregister_robot_mcp_context(token)
 
 
+def test_watchdog_never_touches_ticket_with_open_plan(monkeypatch) -> None:
+    """计划还有未完成步骤的票据：watchdog 既不陈旧关闭也不 TTL 删除，
+    哪怕 updated_at 早已超过阈值（长工具调用期间没有 plan 更新）。"""
+    from datetime import timezone
+
+    from app.services.agent import task_watchdog
+    from app.services.agent.reply_ticket import TICKET_TTL
+
+    token, agent, manager = _qq_ticket_manager()
+    monkeypatch.setattr(
+        "app.services.agent.reply_ticket.reply_ticket_manager",
+        manager,
+    )
+    try:
+        ticket = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="install jdk",
+            source_type="qq",
+        )
+        manager.update_ticket_plan(
+            ticket.ticket_id, [{"step": "install", "status": "in_progress"}]
+        )
+        # 超过 10 分钟陈旧阈值：不应被关闭。
+        ticket.updated_at -= timedelta(minutes=11)
+        stats = {"orphan_tickets_removed": 0, "stale_tickets_closed": 0}
+        task_watchdog._remove_orphan_tickets(datetime.now(timezone.utc), stats)
+        assert stats == {"orphan_tickets_removed": 0, "stale_tickets_closed": 0}
+        assert manager.get(ticket.ticket_id).status == "pending"
+
+        # 超过 6h TTL：也不应被删除。
+        ticket.updated_at -= TICKET_TTL + timedelta(hours=1)
+        task_watchdog._remove_orphan_tickets(datetime.now(timezone.utc), stats)
+        assert stats == {"orphan_tickets_removed": 0, "stale_tickets_closed": 0}
+        assert manager.get(ticket.ticket_id) is not None
+
+        # 计划跑完（plan 清空）后恢复普通票据语义：超时即删。
+        manager.update_ticket_plan(ticket.ticket_id, [])
+        ticket.updated_at -= TICKET_TTL + timedelta(hours=1)
+        task_watchdog._remove_orphan_tickets(datetime.now(timezone.utc), stats)
+        assert stats["orphan_tickets_removed"] == 1
+        assert manager.get(ticket.ticket_id) is None
+    finally:
+        unregister_robot_mcp_context(token)
+
+
+def test_touch_refreshes_ticket_activity() -> None:
+    manager = ReplyTicketManager()
+    agent = SimpleNamespace(
+        _context=SimpleNamespace(
+            robot_id="",
+            robot_context_token="",
+            reply_ticket_id="",
+        )
+    )
+    ticket = manager.create_for_agent(
+        agent,
+        item_id="item-1",
+        handler_id="handler-1",
+        message="request",
+        source_type="web",
+    )
+    ticket.updated_at -= timedelta(minutes=5)
+    before = ticket.updated_at
+    manager.touch(ticket.ticket_id)
+    assert ticket.updated_at > before
+    assert (datetime.now() - ticket.updated_at).total_seconds() < 5
+    # 缺失/空票据安静跳过。
+    manager.touch("missing-ticket")
+    manager.touch("")
+
+
 def test_prune_tolerates_aware_restored_timestamps() -> None:
     from datetime import timezone
 
@@ -494,7 +567,8 @@ def test_update_ticket_plan_and_latest_plan_for_item() -> None:
     found_plan.append({"step": "bogus", "status": "pending"})
     assert ticket.plan == plan
 
-    # A newer non-terminal ticket owns the item's latest plan.
+    # 新票据没有计划时，旧票据的计划仍是 item 的当前计划——
+    # plan 跟着创建它的票据走，直到计划跑完。
     newer = manager.create_for_agent(
         agent,
         item_id="item-1",
@@ -502,15 +576,20 @@ def test_update_ticket_plan_and_latest_plan_for_item() -> None:
         message="second request",
         source_type="web",
     )
-    found_ticket, found_plan = manager.latest_plan_for_item("item-1")
-    assert found_ticket is newer
-    assert found_plan == []
-
-    # Terminal (delivered/failed) tickets no longer expose a plan.
-    newer.status = "failed"
+    assert newer.plan == []
     found_ticket, found_plan = manager.latest_plan_for_item("item-1")
     assert found_ticket is ticket
     assert found_plan == plan
+
+    # 票据 status 不影响计划可见性：delivered/failed 只代表发过回复，
+    # 不代表任务结束。
+    newer.status = "failed"
     ticket.status = "delivered"
+    found_ticket, found_plan = manager.latest_plan_for_item("item-1")
+    assert found_ticket is ticket
+    assert found_plan == plan
+
+    # 计划清空（全部终态）后才不再暴露。
+    manager.update_ticket_plan(ticket.ticket_id, [])
     assert manager.latest_plan_for_item("item-1") == (None, [])
     assert manager.latest_plan_for_item("item-unknown") == (None, [])

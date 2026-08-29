@@ -1034,6 +1034,27 @@ class LocalMCPServer:
                 }
             ]
 
+        # GLM 类模型在并行工具调用时偶尔会补一个占位调用
+        # （plan=[{step:"placeholder"}]），它会覆盖掉真实计划、逼模型下轮
+        # 再恢复——纯浪费。占位写入直接忽略，保持当前计划不变。
+        if (
+            isinstance(plan, list)
+            and len(plan) == 1
+            and isinstance(plan[0], dict)
+            and str(plan[0].get("step") or "").strip().lower() in {"placeholder", "占位"}
+        ):
+            existing = reply_ticket_manager.get(ticket.ticket_id)
+            current = existing.plan if existing else []
+            return [
+                {
+                    "type": "text",
+                    "text": (
+                        f"已忽略占位 plan 写入，当前计划保持不变（{len(current)} 步）。"
+                        "不要重复发起占位调用。"
+                    ),
+                }
+            ]
+
         # plan=[] means "task done" — mark all remaining steps as completed
         # and keep the plan on the ticket for UI history.
         if isinstance(plan, list) and not plan:
@@ -1423,6 +1444,8 @@ class LocalMCPServer:
         pending_robot_reply_id: str | None = None,
     ) -> None:
         def worker() -> None:
+            daemon_job_id = ""
+            pending_job_recorded = False
             try:
                 start_result = connection.run_job_http(**request_kwargs)
             except Exception as exc:
@@ -1448,6 +1471,18 @@ class LocalMCPServer:
                     debug_log(
                         f"[LocalMCPServer] background job scheduled: item={item_id}, job_id={daemon_job_id}, command={command}"
                     )
+                    if reply_ticket_id:
+                        try:
+                            from app.services.agent.reply_ticket import (
+                                reply_ticket_manager,
+                            )
+
+                            reply_ticket_manager.add_pending_job(
+                                reply_ticket_id, daemon_job_id
+                            )
+                            pending_job_recorded = True
+                        except Exception:
+                            pass
                     result = self._poll_background_job_result(
                         connection,
                         item_id=item_id,
@@ -1458,6 +1493,21 @@ class LocalMCPServer:
             debug_log(
                 f"[LocalMCPServer] background run_job result: item={item_id}, success={result.get('success')}, exit_code={result.get('exit_code')}, timed_out={result.get('timed_out')}"
             )
+
+            if pending_job_recorded:
+                # exactly-once 闸门：resume sweep 若已抢先拉取并投递了这个
+                # 结果（进程重启后轮询线程已死的情况），这里直接收尾退出。
+                try:
+                    from app.services.agent.reply_ticket import reply_ticket_manager
+
+                    if not reply_ticket_manager.take_pending_job(
+                        reply_ticket_id, daemon_job_id
+                    ):
+                        if agent_session:
+                            agent_session.clear_terminal_job(command)
+                        return
+                except Exception:
+                    pass
 
             if result.get("cancelled") and reply_ticket_id:
                 # User-initiated cancel: broadcast the cancelled snapshot for

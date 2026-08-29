@@ -83,13 +83,22 @@ def _close_stale_orphan_ticket(ticket: Any, stats: dict[str, int]) -> None:
 
 
 def _remove_orphan_tickets(now: datetime, stats: dict[str, int]) -> None:
-    from app.services.agent.reply_ticket import TICKET_TTL, reply_ticket_manager
+    from app.services.agent.reply_ticket import (
+        TICKET_TTL,
+        plan_has_open_steps,
+        reply_ticket_manager,
+    )
 
     inactive_cutoff = now - TICKET_TTL
     stale_cutoff = now - ORPHAN_TICKET_STALE
     with reply_ticket_manager._lock:
         tickets = list(reply_ticket_manager._tickets.values())
     for ticket in tickets:
+        # 计划还有未完成步骤的票据是活任务：长工具调用期间 updated_at
+        # 由轮次 touch 刷新，但即便失手也绝不由 watchdog 关闭/删除——
+        # 计划生命周期只由 plan 步骤自身决定（跑到 plan 为空为止）。
+        if plan_has_open_steps(getattr(ticket, "plan", None)):
+            continue
         updated_at = _as_utc(ticket.updated_at)
         if updated_at >= inactive_cutoff:
             if (

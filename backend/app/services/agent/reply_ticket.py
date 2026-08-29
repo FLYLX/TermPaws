@@ -19,18 +19,26 @@ TICKET_TTL = timedelta(hours=6)
 # How long a ticket's plan stays visible to the /plan API after the ticket
 # was last touched (plan updates and turn activity refresh it).
 PLAN_LOOKUP_FRESH_SECONDS = 30 * 60
-# 计划条带的"僵尸"判定：票据状态正常但计划 N 秒没有任何推进（轮次已死），
-# 继续展示就是残留。长时间安装步骤会由后台 jobs 区兜底展示。
-PLAN_STALL_HIDE_SECONDS = 300.0
-# Fully-completed plans linger on the ticket for UI history, but the item
-# plan panel should drop them shortly after completion so finished tasks do
-# not occupy the current-plan table indefinitely.
-PLAN_COMPLETED_GRACE_SECONDS = 60
 QQ_TICKET_SUPERSEDE_REASON = "superseded by newer QQ message"
 CURRENT_QQ_MESSAGE_MARKER = "[Current QQ message]"
 CQ_CODE_RE = re.compile(r"\[CQ:[^\]]+\]", re.IGNORECASE)
 
 TICKET_ALIASES_KV_KEY = "reply_ticket_aliases"
+
+
+def plan_has_open_steps(plan: Any) -> bool:
+    """计划的唯一事实源：还有 pending/in_progress 步骤 = 任务没跑完。
+
+    展示、轮内续跑、resume sweep、watchdog 保护全部只看这一个条件，
+    不再耦合票据 status——delivered 只代表"发过一条回复"，不代表任务结束。
+    """
+    if not isinstance(plan, list) or not plan:
+        return False
+    return any(
+        isinstance(step, dict)
+        and str(step.get("status") or "").strip().lower() in {"pending", "in_progress"}
+        for step in plan
+    )
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -212,6 +220,10 @@ class ReplyTicket:
     # ticket. Identity, lifecycle and cleanup all reuse the ticket's existing
     # mechanisms; old persisted payloads without this field default to [].
     plan: list[dict] = field(default_factory=list)
+    # run_job 启动的 daemon 后台任务 id 列表（同一票据可并行多个 job）。
+    # 结果由 backend 轮询线程送回，但进程重启后线程消亡——持久化这些 id
+    # 让 resume sweep 能重新接管：向 daemon 拉取已完成的结果并注入。
+    pending_job_ids: list[str] = field(default_factory=list)
 
     @property
     def is_qq(self) -> bool:
@@ -543,20 +555,58 @@ class ReplyTicketManager:
             _persist_ticket(ticket)
             return ticket
 
+    def add_pending_job(self, ticket_id: str, job_id: str) -> None:
+        if not ticket_id or not job_id:
+            return
+        with self._lock:
+            ticket = self._tickets.get(self._resolve_ticket_id_locked(ticket_id))
+            if ticket is None:
+                return
+            if str(job_id) not in ticket.pending_job_ids:
+                ticket.pending_job_ids.append(str(job_id))
+            ticket.updated_at = datetime.now()
+            _persist_ticket(ticket)
+
+    def take_pending_job(self, ticket_id: str, job_id: str) -> bool:
+        """从票据摘除该 job_id 并返回 True；不存在则 False。
+
+        结果投递的 exactly-once 闸门：轮询线程和 resume sweep 都可能拿到
+        已完成结果，谁摘成功谁负责投递，另一方直接跳过。
+        """
+        if not ticket_id or not job_id:
+            return False
+        with self._lock:
+            ticket = self._tickets.get(self._resolve_ticket_id_locked(ticket_id))
+            if ticket is None or str(job_id) not in ticket.pending_job_ids:
+                return False
+            ticket.pending_job_ids.remove(str(job_id))
+            ticket.updated_at = datetime.now()
+            _persist_ticket(ticket)
+            return True
+
+    def touch(self, ticket_id: str) -> None:
+        """轮次活性信号：每轮迭代调用一次，刷新 updated_at。
+
+        长工具调用（安装/编译等 run_job）期间没有任何 plan 更新，不刷新
+        就会被 watchdog 的 10 分钟陈旧关闭器误判死亡。只更新内存，
+        持久化由后续的 plan/status 写入顺带完成，避免每轮写盘。
+        """
+        if not ticket_id:
+            return
+        with self._lock:
+            ticket = self._tickets.get(self._resolve_ticket_id_locked(ticket_id))
+            if ticket is not None:
+                ticket.updated_at = datetime.now()
+
     def latest_plan_for_item(
         self, item_id: str
     ) -> tuple[ReplyTicket | None, list[dict]]:
         """Plan of the item's most recently updated ticket that still has one.
 
-        A ticket being delivered only means "a reply was sent", not that the
-        task chain ended — long chains keep working across follow-up turns,
-        and their plan lives on the ticket that created it. So instead of
-        requiring a live ticket, we return the freshest ticket with a
-        non-empty plan inside the activity window. Delivered tickets also
-        drop out after the grace window once they go idle: live chains keep
-        bumping updated_at because background-job turns reuse the same
-        ticket. Plans whose ticket has not been touched for
-        PLAN_LOOKUP_FRESH_SECONDS are considered abandoned.
+        规则只有一条：计划还有未完成步骤就返回它。票据 status 不参与判断
+        （delivered 只代表发过回复，不代表任务结束）；唯一的时间窗口是
+        PLAN_LOOKUP_FRESH_SECONDS 遗弃保护，运行中的轮次会通过 touch 持续
+        刷新 updated_at，不会误伤。
         """
         with self._lock:
             now = datetime.now()
@@ -564,23 +614,10 @@ class ReplyTicketManager:
             for ticket in self._tickets.values():
                 if ticket.item_id != str(item_id):
                     continue
-                if not ticket.plan:
+                if not plan_has_open_steps(ticket.plan):
                     continue
                 if (now - ticket.updated_at).total_seconds() > PLAN_LOOKUP_FRESH_SECONDS:
                     continue
-                idle_seconds = (now - ticket.updated_at).total_seconds()
-                if idle_seconds > PLAN_COMPLETED_GRACE_SECONDS:
-                    all_steps_done = all(
-                        str(step.get("status")) in {"completed", "cancelled"}
-                        for step in ticket.plan
-                    )
-                    terminal_ticket = ticket.status in {
-                        "delivered",
-                        "failed",
-                        "cancelled",
-                    }
-                    if all_steps_done or terminal_ticket:
-                        continue
                 candidates.append(ticket)
         if not candidates:
             return None, []
@@ -589,19 +626,18 @@ class ReplyTicketManager:
 
     def active_plans_for_item(self, item_id: str) -> list[dict[str, Any]]:
         """该 item 所有未完成计划的票据（多任务展示用），按更新时间倒序。
-        全部步骤完成/取消的票据视为已完结，直接过滤掉——前端条带不残留。"""
+        有未完成步骤就展示，步骤全部终态（plan 会被清空）即消失；
+        票据 status 不参与过滤。PLAN_LOOKUP_FRESH_SECONDS 仅作遗弃保护。"""
         with self._lock:
             now = datetime.now()
             entries = []
             for ticket in self._tickets.values():
-                if ticket.item_id != str(item_id) or not ticket.plan:
+                if ticket.item_id != str(item_id):
                     continue
-                if ticket.status in {"delivered", "failed", "cancelled"}:
+                if not plan_has_open_steps(ticket.plan):
                     continue
                 idle_seconds = (now - ticket.updated_at).total_seconds()
                 if idle_seconds > PLAN_LOOKUP_FRESH_SECONDS:
-                    continue
-                if idle_seconds > PLAN_STALL_HIDE_SECONDS:
                     continue
                 done = sum(
                     1

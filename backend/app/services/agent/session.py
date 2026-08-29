@@ -2041,6 +2041,12 @@ class AgentSession:
                         self._emit_idle_or_waiting_status(0)
                 continue
 
+            # 过期的 plan-resume 输入直接丢弃：计划已被先前轮次跑完，
+            # 再执行只会让 agent 重新造计划、把已完成的任务重做一遍。
+            batch = [msg for msg in batch if not self._is_stale_plan_resume(msg)]
+            if not batch:
+                continue
+
             merged = batch[0] if len(batch) == 1 else self._merge_input_batch(batch)
 
             self._begin_turn(merged)
@@ -2058,6 +2064,17 @@ class AgentSession:
 
         with self.lock:
             self.state = SessionState.IDLE
+
+    def _is_stale_plan_resume(self, msg: InputMessage) -> bool:
+        if not str(getattr(msg, "source_label", "") or "").startswith("plan-resume"):
+            return False
+        from app.services.agent.reply_ticket import (
+            plan_has_open_steps,
+            reply_ticket_manager,
+        )
+
+        ticket = reply_ticket_manager.get(str(getattr(msg, "reply_ticket_id", "") or ""))
+        return ticket is None or not plan_has_open_steps(ticket.plan)
 
     def process_queue(self):
         """Legacy compat: wake the consumer."""
@@ -2311,6 +2328,9 @@ class AgentSession:
             _response_emitted_in_loop = False
 
             for iteration_index in range(MAX_ITERATIONS):
+                from app.services.agent.reply_ticket import reply_ticket_manager as _rtm
+
+                _rtm.touch(input_msg.reply_ticket_id)
                 timed_out, timeout_reason = turn_guard.check_timeout()
                 if timed_out:
                     terminal_failure_report = "任务未能完成：本轮处理超时，已停止该任务。"
@@ -2605,7 +2625,11 @@ class AgentSession:
 
             turn_final_content = ""
             turn_completed = False
+            plan_continuation_count = 0
             for _ in range(MAX_ITERATIONS):
+                from app.services.agent.reply_ticket import reply_ticket_manager as _rtm
+
+                _rtm.touch(input_msg.reply_ticket_id)
                 timed_out, timeout_reason = turn_guard.check_timeout()
                 if timed_out:
                     self.emit_output(timeout_reason, "agent_warning")
@@ -2623,6 +2647,34 @@ class AgentSession:
                 )
 
                 if not (hasattr(message, "tool_calls") and message.tool_calls):
+                    # 计划还有未完成步骤时轮次不能就这么结束——由计划自身
+                    # 驱动继续执行，超过 5 次推进仍不行动才放行（防死循环）。
+                    from app.services.agent.reply_ticket import (
+                        plan_has_open_steps,
+                        reply_ticket_manager,
+                    )
+
+                    _plan_ticket = reply_ticket_manager.get(input_msg.reply_ticket_id)
+                    if (
+                        _plan_ticket is not None
+                        and plan_has_open_steps(_plan_ticket.plan)
+                        and plan_continuation_count < 5
+                    ):
+                        plan_continuation_count += 1
+                        messages.append(
+                            {"role": "assistant", "content": message.content or ""}
+                        )
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": (
+                                    "当前计划还有未完成步骤。不要总结、不要表态，"
+                                    "立即调用工具继续执行当前 in_progress/pending 步骤；"
+                                    "每完成一步用 mcp_local_update_plan 更新状态，全部完成后才总结收尾。"
+                                ),
+                            }
+                        )
+                        continue
                     if message.content:
                         final_content = strip_think_tags(guard_fabricated_tool_trace(message.content))
                         turn_final_content = final_content
@@ -3419,7 +3471,14 @@ class AgentSessionManager:
         with self._global_lock:
             if item_id not in self._sessions:
                 self._sessions[item_id] = AgentSession(item_id, handler_id)
-            return self._sessions[item_id]
+            session = self._sessions[item_id]
+        # 工具执行（prepare_capabilities 等）按 item 反查 handler；resume
+        # sweep 等不走 prepare_chat_agent 的路径也要保证这个映射存在。
+        if item_id and handler_id:
+            from app.services.agent.agent import item_handler_context
+
+            item_handler_context.set_handler(item_id, handler_id)
+        return session
 
     def get_session(self, item_id: str) -> AgentSession | None:
         with self._global_lock:

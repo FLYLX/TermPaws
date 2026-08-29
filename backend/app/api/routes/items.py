@@ -1073,7 +1073,7 @@ def cancel_item_plan(
     id: uuid.UUID,
     ticket_id: str,
 ) -> dict[str, Any]:
-    """取消指定任务：票据标记取消，未完成步骤一并取消。"""
+    """取消指定任务：中断轮次、杀掉后台 job、票据标记取消、步骤一并取消。"""
     item = session.get(Item, id)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -1084,13 +1084,48 @@ def cancel_item_plan(
     ticket = reply_ticket_manager.get(ticket_id)
     if not ticket or ticket.item_id != str(id):
         raise HTTPException(status_code=404, detail="Plan not found")
+
+    # 1. 先中断正在执行的轮次：否则运行中的轮次会继续执行已取消计划的
+    #    后续步骤，甚至用 update_plan 把计划"复活"。
+    from app.services.agent.session import agent_session_manager
+
+    agent_session = agent_session_manager.get_session(str(id))
+    if agent_session is not None:
+        try:
+            agent_session.abort(clear_queue=True)
+            agent_session.emit_output("任务已由用户取消", "agent_warning")
+            agent_session.emit_status("idle", "")
+        except Exception:
+            logger.exception("[Items] Failed to abort session on plan cancel: item=%s", id)
+
+    # 2. 杀掉票据上的 daemon 后台 job 并摘除——否则远端进程继续跑，
+    #    完成后轮询线程/resume sweep 还会把结果送回来。
+    cancelled_jobs: list[str] = []
+    pending_job_ids = list(getattr(ticket, "pending_job_ids", None) or [])
+    if pending_job_ids:
+        _daemon_status, connection = _get_item_daemon_connection(item)
+        for job_id in pending_job_ids:
+            if connection is not None:
+                try:
+                    connection.cancel_job_http(item_uuid=str(id), job_id=job_id)
+                except Exception:
+                    logger.exception(
+                        "[Items] Failed to cancel daemon job %s on plan cancel: item=%s",
+                        job_id,
+                        id,
+                    )
+            reply_ticket_manager.take_pending_job(ticket_id, job_id)
+            cancelled_jobs.append(job_id)
+
+    # 3. 票据标记取消，未完成步骤一并取消。
     reply_ticket_manager.mark_failed(ticket_id, "用户取消了该任务")
+    finalized_plan: list[dict] = []
     with reply_ticket_manager._lock:
         current = reply_ticket_manager._tickets.get(
             reply_ticket_manager._resolve_ticket_id_locked(ticket_id)
         )
         if current and current.plan:
-            current.plan = [
+            finalized_plan = [
                 {
                     **step,
                     "status": (
@@ -1101,7 +1136,24 @@ def cancel_item_plan(
                 }
                 for step in current.plan
             ]
-    return {"success": True, "ticket_id": ticket_id}
+            current.plan = []
+
+    # 4. 广播取消后的终态快照，前端条带立即消失（不用等轮询）。
+    try:
+        from app.services.agent.stream_manager import stream_manager
+
+        stream_manager.broadcast_chat_event(
+            str(id),
+            {
+                "type": "plan_updated",
+                "item_id": str(id),
+                "plan": finalized_plan,
+                "explanation": "cancelled",
+            },
+        )
+    except Exception:
+        pass
+    return {"success": True, "ticket_id": ticket_id, "cancelled_jobs": cancelled_jobs}
 
 
 @router.get("/{id}/jobs")

@@ -607,12 +607,19 @@ class RobotService:
             return (now - updated).total_seconds()
 
         with reply_ticket_manager._lock:
+            all_tickets = list(reply_ticket_manager._tickets.values())
             tickets = [
                 t
-                for t in reply_ticket_manager._tickets.values()
+                for t in all_tickets
                 if (plan_has_open_steps(t.plan) or t.pending_job_ids)
                 and _idle_seconds(t) > 90
             ]
+        if all_tickets:
+            logger.debug(
+                "[RobotService] plan sweep pass: total=%s candidates=%s",
+                len(all_tickets),
+                len(tickets),
+            )
         for ticket in tickets:
             conversation_key = str(ticket.conversation_key or "")
             robot_id = str(ticket.robot_id or "")

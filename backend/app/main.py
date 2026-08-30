@@ -16,6 +16,10 @@ from app.services.plugins import plugin_manager
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    # uvicorn 先配置 root 导致 basicConfig 变 no-op（root 停留 WARNING），
+    # app.* 的 INFO 诊断日志（watchdog/sweep/resume 等）全部不可见。
+    # force=True 强制统一配置，恢复运维可观测性。
+    force=True,
 )
 
 logger = logging.getLogger(__name__)

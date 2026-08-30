@@ -1136,7 +1136,9 @@ def cancel_item_plan(
                 }
                 for step in current.plan
             ]
-            current.plan = []
+    # update_ticket_plan 会同步持久化——直接改内存不落盘的话，重启恢复会
+    # 把已取消的计划当成未完成计划复活。
+    reply_ticket_manager.update_ticket_plan(ticket_id, [])
 
     # 4. 广播取消后的终态快照，前端条带立即消失（不用等轮询）。
     try:

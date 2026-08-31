@@ -5,6 +5,7 @@ import {
 } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
 import {
+  ArrowLeft,
   Code2,
   FileCode,
   FilePlus,
@@ -83,8 +84,12 @@ function SkillsPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 border rounded-lg overflow-hidden bg-card/60 backdrop-blur-sm">
-      <div className="w-60 border-r flex flex-col bg-muted/30 shrink-0">
+    <div className="flex h-full min-h-0 flex-col border rounded-lg overflow-hidden bg-card/60 backdrop-blur-sm md:flex-row">
+      <div
+        className={`w-full flex-col border-b bg-muted/30 shrink-0 md:flex md:w-60 md:border-b-0 md:border-r ${
+          selectedSkill ? "hidden" : "flex"
+        }`}
+      >
         <div className="p-3 border-b space-y-2 shrink-0">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">Skills</h2>
@@ -156,9 +161,24 @@ function SkillsPage() {
         </ScrollArea>
       </div>
 
-      <div className="flex-1 flex flex-col min-w-0">
+      <div
+        className={`flex-1 flex-col min-w-0 min-h-0 ${
+          selectedSkill ? "flex" : "hidden md:flex"
+        }`}
+      >
         {selectedSkill ? (
-          <SkillEditor skill={selectedSkill} />
+          <>
+            <div className="shrink-0 border-b p-2 md:hidden">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelectedSkillId(null)}
+              >
+                <ArrowLeft className="mr-1 h-4 w-4" /> 返回列表
+              </Button>
+            </div>
+            <SkillEditor skill={selectedSkill} />
+          </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
             <Code2 className="h-16 w-16 mb-4 opacity-20" />

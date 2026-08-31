@@ -41,10 +41,9 @@ function ItemHandlersIndex() {
 
   return (
     <div
-      className="flex flex-col overflow-hidden text-zinc-900"
+      className="full-bleed flex flex-col overflow-hidden text-zinc-900"
       style={{
         height: "calc(100svh - 79px)",
-        margin: "-22px -18px -40px",
       }}
     >
       <TerminalDispatcherBoard itemHandlerId="" itemHandler={null} />

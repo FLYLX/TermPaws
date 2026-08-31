@@ -1,5 +1,9 @@
-import { createFileRoute, Outlet, redirect } from "@tanstack/react-router"
-import { useLocation } from "@tanstack/react-router"
+import {
+  createFileRoute,
+  Outlet,
+  redirect,
+  useLocation,
+} from "@tanstack/react-router"
 import { useEffect, useState } from "react"
 
 import { HangTagNav } from "@/components/Layout/HangTagNav"
@@ -32,6 +36,7 @@ const HANG_LAYOUT_CSS = `
 @keyframes tag-pop { from { transform: translateY(-6px) scale(.96); opacity: 0; } to { transform: none; opacity: 1; } }
 .sketch-mini-box { border: 2px solid #3a3a3a; border-radius: 10px; background: #fff; font-weight: 700; font-size: 12px; }
 .hang-page { padding: 6px 18px 14px; animation: page-drop .3s cubic-bezier(.2,.8,.3,1); }
+.full-bleed { margin: -22px -18px -40px; }
 @keyframes page-drop { from { transform: translateY(-22px); opacity: 0; } to { transform: none; opacity: 1; } }
 .hang-page .rounded-lg, .hang-page .rounded-xl, .hang-page .rounded-2xl, .hang-page .rounded-3xl, .hang-page .rounded-md { border-radius: 16px 205px 16px 205px / 205px 16px 205px 16px; }
 .hang-page .rounded-full { border-radius: 9999px; }
@@ -47,6 +52,17 @@ const HANG_LAYOUT_CSS = `
 .hang-page input:not(.code-editor), .hang-page select { color: #1f1f1f; }
 .hang-page textarea:not(.code-editor) { color: #1f1f1f; }
 .version-badge { position: fixed; right: 12px; bottom: 10px; z-index: 10; border: 2px solid #3a3a3a; border-radius: 10px 3px 10px 3px / 3px 10px 3px 10px; background: rgba(255,255,255,.75); backdrop-filter: blur(2px); color: #565654; font-size: 11px; font-weight: 700; padding: 2px 8px; box-shadow: 2px 2px 0 rgba(0,0,0,.08); pointer-events: none; }
+@media (max-width: 767px) {
+  .tag-rail { padding: 14px 10px 8px; gap: 8px; }
+  .hang-tag { padding: 16px 9px 7px; }
+  .hang-tag > span:not(.tag-hole) { display: none; }
+  .tag-user-anchor { right: 8px; }
+  .tag-user-menu { right: 0; width: min(220px, calc(100vw - 20px)); }
+  .hang-page { padding: 6px 8px 12px; }
+  .full-bleed { margin: -14px -8px -28px; }
+  .version-badge { right: 8px; bottom: 6px; }
+  [data-sonner-toaster] { left: 10px !important; right: 10px !important; width: auto !important; }
+}
 `
 
 function VersionBadge() {

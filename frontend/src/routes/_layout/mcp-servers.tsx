@@ -5,7 +5,15 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
-import { Pencil, Plus, RefreshCw, Search, Server, Trash2 } from "lucide-react"
+import {
+  ArrowLeft,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  Server,
+  Trash2,
+} from "lucide-react"
 import { Suspense, useState } from "react"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
@@ -89,8 +97,12 @@ function MCPServersPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-180px)] min-h-[400px] border rounded-lg overflow-hidden">
-      <div className="w-72 border-r flex flex-col bg-muted/30 shrink-0">
+    <div className="flex h-[calc(100svh-180px)] min-h-[400px] flex-col border rounded-lg overflow-hidden md:flex-row">
+      <div
+        className={`w-full flex-col border-b bg-muted/30 shrink-0 md:flex md:w-72 md:border-b-0 md:border-r ${
+          selectedServer ? "hidden" : "flex"
+        }`}
+      >
         <div className="p-3 border-b space-y-2 shrink-0">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">MCP Servers</h2>
@@ -162,9 +174,24 @@ function MCPServersPage() {
         </ScrollArea>
       </div>
 
-      <div className="flex-1 flex flex-col min-w-0">
+      <div
+        className={`flex-1 flex-col min-w-0 min-h-0 ${
+          selectedServer ? "flex" : "hidden md:flex"
+        }`}
+      >
         {selectedServer ? (
-          <MCPServerEditor server={selectedServer} />
+          <>
+            <div className="shrink-0 border-b p-2 md:hidden">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelectedServerName(null)}
+              >
+                <ArrowLeft className="mr-1 h-4 w-4" /> 返回列表
+              </Button>
+            </div>
+            <MCPServerEditor server={selectedServer} />
+          </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
             <Server className="h-16 w-16 mb-4 opacity-20" />

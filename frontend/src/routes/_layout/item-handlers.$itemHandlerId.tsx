@@ -1,15 +1,5 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react"
-import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router"
-import { createPortal } from "react-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router"
 import {
   Bot,
   Brain,
@@ -26,6 +16,16 @@ import {
   X,
   Zap,
 } from "lucide-react"
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
+import { createPortal } from "react-dom"
 
 import {
   ApiError,
@@ -35,7 +35,6 @@ import {
   McpService,
   SkillsService,
 } from "@/client"
-import AddItem from "@/components/Items/AddItem"
 import AddItemHandler from "@/components/ItemHandlers/AddItemHandler"
 import AddItemToHandler from "@/components/ItemHandlers/AddItemToHandler"
 import { ChatLogPanel } from "@/components/ItemHandlers/ChatLogPanel"
@@ -43,35 +42,36 @@ import { HandlerSettingsPanel } from "@/components/ItemHandlers/HandlerSettingsP
 import { MCPSelector as McpSelector } from "@/components/ItemHandlers/McpSelector"
 import { SkillSelector } from "@/components/ItemHandlers/SkillSelector"
 import { TerminalWsPanel } from "@/components/ItemHandlers/TerminalWsPanel"
+import AddItem from "@/components/Items/AddItem"
 import { ChatPanel } from "@/components/Items/ChatPanel"
-import { TerminalOutputPanel } from "@/components/Items/TerminalOutputPanel"
 import { ItemConfigPanel } from "@/components/Items/ItemConfigPanel"
 import { ItemFilesPanel } from "@/components/Items/ItemFilesPanel"
 import { ItemFiltersPanel } from "@/components/Items/ItemFiltersPanel"
 import ItemHandlersList from "@/components/Items/ItemHandlersList"
 import { RobotConversationDebugPanel } from "@/components/Items/RobotConversationDebugPanel"
+import { TerminalOutputPanel } from "@/components/Items/TerminalOutputPanel"
 import { TokenUsagePanel } from "@/components/Items/TokenUsagePanel"
-import { ScheduledTasksManager } from "@/components/scheduled-tasks-manager"
 import { KnowledgeBindingSelector } from "@/components/Knowledge/KnowledgeBindingSelector"
+import { useI18n } from "@/components/locale-provider"
 import { MemoryManager } from "@/components/memory-manager"
 import {
   createRobotBinding,
   deleteRobot,
   deleteRobotBinding,
   diagnoseRobotChain,
-  updateRobotBinding,
   getRobotPlatformsQueryKey,
   getRobotsQueryKey,
   listRobotBindings,
   listRobotPlatforms,
   listRobots,
+  updateRobotBinding,
 } from "@/components/Robots/api"
 import { RobotDetail } from "@/components/Robots/RobotDetail"
 import { CreateRobotDialog } from "@/components/Robots/RobotManager"
-import { getPluginsQueryOptions, isPluginEnabled } from "@/lib/plugins-api"
-import { useI18n } from "@/components/locale-provider"
-import useCustomToast from "@/hooks/useCustomToast"
+import { ScheduledTasksManager } from "@/components/scheduled-tasks-manager"
 import { isLoggedIn } from "@/hooks/useAuth"
+import useCustomToast from "@/hooks/useCustomToast"
+import { getPluginsQueryOptions, isPluginEnabled } from "@/lib/plugins-api"
 import { extractErrorMessage } from "@/utils"
 
 export const Route = createFileRoute("/_layout/item-handlers/$itemHandlerId")({
@@ -290,7 +290,8 @@ export function TerminalDispatcherBoard({
 
   const { data: allHandlersData } = useQuery({
     queryKey: ["itemHandlers"],
-    queryFn: () => ItemHandlersService.readItemHandlers({ skip: 0, limit: 100 }),
+    queryFn: () =>
+      ItemHandlersService.readItemHandlers({ skip: 0, limit: 100 }),
   })
   const allHandlers = useMemo<any[]>(() => {
     if (Array.isArray(allHandlersData)) {
@@ -346,7 +347,8 @@ export function TerminalDispatcherBoard({
   const enabledSkills: string[] = itemHandler?.enabled_skills ?? []
   const mcpServers = mcpData?.data || []
   const enabledMcpServers: string[] = itemHandler?.enabled_mcp_servers ?? []
-  const enabledKnowledgeFiles: string[] = itemHandler?.enabled_knowledge_files ?? []
+  const enabledKnowledgeFiles: string[] =
+    itemHandler?.enabled_knowledge_files ?? []
 
   useEffect(() => {
     if (!expandedCard && !terminalPanelOpen && !botDetailId) {
@@ -380,10 +382,14 @@ export function TerminalDispatcherBoard({
         requestBody: { enabled_skills: newSkills },
       })
       showSuccessToast("技能配置已更新")
-      queryClient.invalidateQueries({ queryKey: ["itemHandler", itemHandlerId] })
+      queryClient.invalidateQueries({
+        queryKey: ["itemHandler", itemHandlerId],
+      })
     } catch (error) {
       showErrorToast(
-        error instanceof ApiError ? extractErrorMessage(error) : "技能配置更新失败",
+        error instanceof ApiError
+          ? extractErrorMessage(error)
+          : "技能配置更新失败",
       )
     }
   }
@@ -402,10 +408,14 @@ export function TerminalDispatcherBoard({
         requestBody: { enabled_mcp_servers: newServers },
       })
       showSuccessToast("MCP 配置已更新")
-      queryClient.invalidateQueries({ queryKey: ["itemHandler", itemHandlerId] })
+      queryClient.invalidateQueries({
+        queryKey: ["itemHandler", itemHandlerId],
+      })
     } catch (error) {
       showErrorToast(
-        error instanceof ApiError ? extractErrorMessage(error) : "MCP 配置更新失败",
+        error instanceof ApiError
+          ? extractErrorMessage(error)
+          : "MCP 配置更新失败",
       )
     }
   }
@@ -424,10 +434,14 @@ export function TerminalDispatcherBoard({
         requestBody: { enabled_knowledge_files: newFiles } as any,
       })
       showSuccessToast("知识库配置已更新")
-      queryClient.invalidateQueries({ queryKey: ["itemHandler", itemHandlerId] })
+      queryClient.invalidateQueries({
+        queryKey: ["itemHandler", itemHandlerId],
+      })
     } catch (error) {
       showErrorToast(
-        error instanceof ApiError ? extractErrorMessage(error) : "知识库配置更新失败",
+        error instanceof ApiError
+          ? extractErrorMessage(error)
+          : "知识库配置更新失败",
       )
     }
   }
@@ -439,8 +453,12 @@ export function TerminalDispatcherBoard({
         itemId,
       })
       showSuccessToast(t("itemHandlers.detail.itemDisconnected"))
-      queryClient.invalidateQueries({ queryKey: ["itemHandler-items", itemHandlerId] })
-      queryClient.invalidateQueries({ queryKey: ["itemHandler", itemHandlerId] })
+      queryClient.invalidateQueries({
+        queryKey: ["itemHandler-items", itemHandlerId],
+      })
+      queryClient.invalidateQueries({
+        queryKey: ["itemHandler", itemHandlerId],
+      })
       queryClient.invalidateQueries({ queryKey: ["itemHandlers"] })
       queryClient.invalidateQueries({ queryKey: ["items"] })
     } catch (_error) {
@@ -476,8 +494,12 @@ export function TerminalDispatcherBoard({
         requestBody: { item_handler_id: itemHandlerId, item_id: itemId },
       })
       showSuccessToast(t("itemHandlers.detail.itemConnected"))
-      queryClient.invalidateQueries({ queryKey: ["itemHandler-items", itemHandlerId] })
-      queryClient.invalidateQueries({ queryKey: ["itemHandler", itemHandlerId] })
+      queryClient.invalidateQueries({
+        queryKey: ["itemHandler-items", itemHandlerId],
+      })
+      queryClient.invalidateQueries({
+        queryKey: ["itemHandler", itemHandlerId],
+      })
       queryClient.invalidateQueries({ queryKey: ["itemHandlers"] })
       queryClient.invalidateQueries({ queryKey: ["items"] })
     } catch (_error) {
@@ -626,7 +648,10 @@ export function TerminalDispatcherBoard({
       mode,
       id,
       from,
-      to: { x: event.clientX - boardRect.left, y: event.clientY - boardRect.top },
+      to: {
+        x: event.clientX - boardRect.left,
+        y: event.clientY - boardRect.top,
+      },
     }
     wireDragRef.current = initial
     setWireDrag(initial)
@@ -644,7 +669,10 @@ export function TerminalDispatcherBoard({
       const dispatcherRect =
         dispatcherNodeRef.current?.getBoundingClientRect() ?? null
       if (current.mode === "bind-item") {
-        if (dispatcherRect && hitRect({ x: ev.clientX, y: ev.clientY }, dispatcherRect)) {
+        if (
+          dispatcherRect &&
+          hitRect({ x: ev.clientX, y: ev.clientY }, dispatcherRect)
+        ) {
           hint = "dispatcher"
         }
       }
@@ -664,7 +692,9 @@ export function TerminalDispatcherBoard({
       }
       const point = { x: ev.clientX, y: ev.clientY }
       const dispatcherRect = dispatcherNodeRef.current?.getBoundingClientRect()
-      const overDispatcher = dispatcherRect ? hitRect(point, dispatcherRect) : false
+      const overDispatcher = dispatcherRect
+        ? hitRect(point, dispatcherRect)
+        : false
 
       if (ended.mode === "bind-item" && overDispatcher) {
         void handleConnect(ended.id)
@@ -775,10 +805,7 @@ export function TerminalDispatcherBoard({
   // Keep the terminals in their original (stable) order — do NOT group by
   // bound status, otherwise rows jump around on connect/disconnect and the
   // wire endpoints no longer line up with the row you clicked.
-  const terminalItems = useMemo(
-    () => allItemsList,
-    [allItemsList],
-  )
+  const terminalItems = useMemo(() => allItemsList, [allItemsList])
   // Assign a gray shade per daemon host so terminals on different hosts are
   // visually distinguishable.
   const hostShadeClass = useMemo(() => {
@@ -819,15 +846,17 @@ export function TerminalDispatcherBoard({
     ? selectedTerminalId
     : String(terminalItems[0]?.id ?? "")
   const primaryTerminalTitle =
-    terminalItems.find(
-      (item: any) => String(item.id) === primaryTerminalId,
-    )?.title ?? ""
+    terminalItems.find((item: any) => String(item.id) === primaryTerminalId)
+      ?.title ?? ""
   const primaryTerminalStatus =
-    terminalItems.find(
-      (item: any) => String(item.id) === primaryTerminalId,
-    )?.status ?? ""
+    terminalItems.find((item: any) => String(item.id) === primaryTerminalId)
+      ?.status ?? ""
   const terminalFeatures = [
-    { key: "chat", title: "Web Chat", icon: <MessageSquare className="size-4" /> },
+    {
+      key: "chat",
+      title: "Web Chat",
+      icon: <MessageSquare className="size-4" />,
+    },
     { key: "output", title: "终端输出", icon: <Terminal className="size-4" /> },
     ...(terminalWsPluginEnabled
       ? [
@@ -839,7 +868,13 @@ export function TerminalDispatcherBoard({
         ]
       : []),
     ...(robotPluginEnabled
-      ? [{ key: "qq", title: "QQ 对话调试", icon: <MessageSquare className="size-4" /> }]
+      ? [
+          {
+            key: "qq",
+            title: "QQ 对话调试",
+            icon: <MessageSquare className="size-4" />,
+          },
+        ]
       : []),
     { key: "files", title: "文件", icon: <FileText className="size-4" /> },
     { key: "filters", title: "过滤器", icon: <Filter className="size-4" /> },
@@ -861,7 +896,9 @@ export function TerminalDispatcherBoard({
     "start" | "stop" | "restart" | null
   >(null)
   const refreshTerminalData = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["itemHandler-items", itemHandlerId] })
+    queryClient.invalidateQueries({
+      queryKey: ["itemHandler-items", itemHandlerId],
+    })
     queryClient.invalidateQueries({ queryKey: ["items"] })
   }, [queryClient, itemHandlerId])
   const handleItemAction = useCallback(
@@ -900,7 +937,13 @@ export function TerminalDispatcherBoard({
         refreshTerminalData()
       }
     },
-    [primaryTerminalId, itemAction, refreshTerminalData, showSuccessToast, showErrorToast],
+    [
+      primaryTerminalId,
+      itemAction,
+      refreshTerminalData,
+      showSuccessToast,
+      showErrorToast,
+    ],
   )
 
   const boardRef = useRef<HTMLDivElement | null>(null)
@@ -995,7 +1038,8 @@ export function TerminalDispatcherBoard({
       const cp2 = { x: to.x - approach, y: to.y }
       return `M ${from.x} ${from.y} C ${cp1.x} ${cp1.y}, ${cp2.x} ${cp2.y}, ${to.x} ${to.y}`
     }
-    const next: { key: string; d: string; kind: "item" | "bot"; id: string }[] = []
+    const next: { key: string; d: string; kind: "item" | "bot"; id: string }[] =
+      []
     for (const item of connectedItemsList) {
       const from = anchorPoint("dispatcher-port", "right")
       const to = anchorPoint(`item-port-${item.id}`, "left")
@@ -1024,7 +1068,7 @@ export function TerminalDispatcherBoard({
       }
     }
     setWirePaths(next)
-  }, [connectedItemsList, boundBots, primaryTerminalId])
+  }, [connectedItemsList, boundBots])
 
   useLayoutEffect(() => {
     recomputeWires()
@@ -1036,16 +1080,14 @@ export function TerminalDispatcherBoard({
     // re-measure after slide-in animations / fonts settle so wire
     // endpoints land on the real anchor positions
     const raf = requestAnimationFrame(() => recomputeWires())
-    const timers = [80, 250, 450].map((ms) =>
-      setTimeout(recomputeWires, ms),
-    )
+    const timers = [80, 250, 450].map((ms) => setTimeout(recomputeWires, ms))
     return () => {
       window.removeEventListener("resize", recomputeWires)
       observer.disconnect()
       cancelAnimationFrame(raf)
       timers.forEach(clearTimeout)
     }
-  }, [recomputeWires, expandedCard])
+  }, [recomputeWires])
 
   const loadingHint = (text: string) => (
     <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
@@ -1078,7 +1120,9 @@ export function TerminalDispatcherBoard({
                 key={item.id}
                 className="flex items-center justify-between gap-2 rounded-lg border px-2 py-1.5 text-sm"
               >
-                <span className="min-w-0 truncate">{item.title || item.id}</span>
+                <span className="min-w-0 truncate">
+                  {item.title || item.id}
+                </span>
                 <button
                   type="button"
                   onClick={() => void handleDisconnect(String(item.id))}
@@ -1180,7 +1224,10 @@ export function TerminalDispatcherBoard({
     boardCards.find((card) => card.key === expandedCard) ?? null
 
   return (
-    <div ref={boardRef} className="dispatcher-board relative flex min-h-0 w-full flex-1 flex-col">
+    <div
+      ref={boardRef}
+      className="dispatcher-board relative flex min-h-0 w-full flex-1 flex-col"
+    >
       <style>{DISPATCHER_BOARD_CSS}</style>
       <svg className="board-wires" aria-hidden>
         {wirePaths.map((wire) => (
@@ -1199,9 +1246,8 @@ export function TerminalDispatcherBoard({
                 }
                 if (picked.kind === "item") {
                   const title =
-                    terminalItems.find(
-                      (it: any) => String(it.id) === picked.id,
-                    )?.title || picked.id
+                    terminalItems.find((it: any) => String(it.id) === picked.id)
+                      ?.title || picked.id
                   askConfirm(`断开终端「${title}」与调度器的连接？`, () =>
                     handleDisconnect(picked.id),
                   )
@@ -1238,36 +1284,85 @@ export function TerminalDispatcherBoard({
           </div>
           <ScrollColumn>
             <div className="space-y-2">
-            {allHandlers.length === 0 ? (
-              <div className="sketch-box sketch-b px-3 py-4 text-center text-xs">
-                还没有调度器
-              </div>
-            ) : (
-              allHandlers.map((handler: any, index: number) => {
-                const isActive = String(handler.id) === String(itemHandlerId)
-                const boxClass = `sketch-box edge-left-box px-3 py-2.5 text-left text-sm w-full ${
-                  index % 2 ? "sketch-b" : "sketch-c"
-                } ${isActive ? "sketch-active" : "sketch-hover"}`
-                if (isActive) {
+              {allHandlers.length === 0 ? (
+                <div className="sketch-box sketch-b px-3 py-4 text-center text-xs">
+                  还没有调度器
+                </div>
+              ) : (
+                allHandlers.map((handler: any, index: number) => {
+                  const isActive = String(handler.id) === String(itemHandlerId)
+                  const boxClass = `sketch-box edge-left-box px-3 py-2.5 text-left text-sm w-full ${
+                    index % 2 ? "sketch-b" : "sketch-c"
+                  } ${isActive ? "sketch-active" : "sketch-hover"}`
+                  if (isActive) {
+                    return (
+                      <div
+                        key={handler.id}
+                        ref={(el) => {
+                          dispatcherNodeRef.current = el
+                          setAnchor("dispatcher")(el)
+                        }}
+                        title="当前调度器"
+                        className={`${boxClass} relative ${
+                          dropHint === "dispatcher" ? "sketch-drop-target" : ""
+                        }`}
+                      >
+                        <div className="dispatcher-box-body">
+                          <div className="font-black">⚙ {handler.name}</div>
+                          <div className="text-[10px] text-muted-foreground">
+                            dispatcher · {handler.model || "未设置模型"}
+                          </div>
+                        </div>
+                        <div
+                          ref={setAnchor("dispatcher-bot") as any}
+                          className="mx-auto h-0 w-0"
+                        />
+                        <span
+                          className="item-del"
+                          title="删除该调度器"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            deleteDispatcherById(handler)
+                          }}
+                        >
+                          <Trash2 className="size-3" />
+                        </span>
+                        <span
+                          ref={setAnchor("dispatcher-port") as any}
+                          className="wire-handle"
+                          title="按住拉线到右侧待接入终端进行连接"
+                          onPointerDown={(event) => {
+                            event.stopPropagation()
+                            startWireDrag(
+                              event,
+                              "wire-from-dispatcher",
+                              "",
+                              "dispatcher-port",
+                            )
+                          }}
+                        />
+                      </div>
+                    )
+                  }
                   return (
-                    <div
+                    <button
                       key={handler.id}
-                      ref={(el) => {
-                        dispatcherNodeRef.current = el
-                        setAnchor("dispatcher")(el)
-                      }}
-                      title="当前调度器"
-                      className={`${boxClass} relative ${
-                        dropHint === "dispatcher" ? "sketch-drop-target" : ""
-                      }`}
+                      type="button"
+                      onClick={() =>
+                        void navigate({
+                          to: "/item-handlers/$itemHandlerId",
+                          params: { itemHandlerId: String(handler.id) },
+                        })
+                      }
+                      title="切换到这个调度器"
+                      className={`${boxClass} relative`}
                     >
                       <div className="dispatcher-box-body">
-                        <div className="font-black">⚙ {handler.name}</div>
+                        <div className="font-bold">⚙ {handler.name}</div>
                         <div className="text-[10px] text-muted-foreground">
-                          dispatcher · {handler.model || "未设置模型"}
+                          {handler.model || "未设置模型"}
                         </div>
                       </div>
-                      <div ref={setAnchor("dispatcher-bot") as any} className="mx-auto h-0 w-0" />
                       <span
                         className="item-del"
                         title="删除该调度器"
@@ -1278,56 +1373,10 @@ export function TerminalDispatcherBoard({
                       >
                         <Trash2 className="size-3" />
                       </span>
-                      <span
-                        ref={setAnchor("dispatcher-port") as any}
-                        className="wire-handle"
-                        title="按住拉线到右侧待接入终端进行连接"
-                        onPointerDown={(event) => {
-                          event.stopPropagation()
-                          startWireDrag(
-                            event,
-                            "wire-from-dispatcher",
-                            "",
-                            "dispatcher-port",
-                          )
-                        }}
-                      />
-                    </div>
+                    </button>
                   )
-                }
-                return (
-                  <button
-                    key={handler.id}
-                    type="button"
-                    onClick={() =>
-                      void navigate({
-                        to: "/item-handlers/$itemHandlerId",
-                        params: { itemHandlerId: String(handler.id) },
-                      })
-                    }
-                    title="切换到这个调度器"
-                    className={`${boxClass} relative`}
-                  >
-                    <div className="dispatcher-box-body">
-                      <div className="font-bold">⚙ {handler.name}</div>
-                      <div className="text-[10px] text-muted-foreground">
-                        {handler.model || "未设置模型"}
-                      </div>
-                    </div>
-                    <span
-                      className="item-del"
-                      title="删除该调度器"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        deleteDispatcherById(handler)
-                      }}
-                    >
-                      <Trash2 className="size-3" />
-                    </span>
-                  </button>
-                )
-              })
-            )}
+                })
+              )}
             </div>
           </ScrollColumn>
         </aside>
@@ -1367,204 +1416,218 @@ export function TerminalDispatcherBoard({
           </div>
           <ScrollColumn>
             <div className="space-y-3 pr-0">
-            {terminalGroups.length === 0 ? (
-              <div className="sketch-box sketch-b px-3 py-4 text-center text-xs">
-                还没有终端，先去项目页创建
-              </div>
-            ) : (
-              terminalGroups.map((group) => (
-                <div key={group.host} className={`space-y-1 rounded-lg p-1.5 ${group.shade}`}>
-                  <div className="truncate px-1 text-[10px] font-bold text-muted-foreground" title={group.host}>
-                    {group.host}
-                  </div>
-                  {group.items.map((item: any, index: number) => {
-                    const bound = connectedItemIds.has(String(item.id))
-                    return (
-                      <button
-                        key={item.id}
-                        ref={setAnchor(`item-${item.id}`) as any}
-                        type="button"
-                        onClick={() => {
-                          setSelectedTerminalId(String(item.id))
-                          setTerminalPanelOpen(true)
-                        }}
-                        title={
-                          bound
-                            ? "点击打开交互终端 · 点连线断开"
-                            : "点击打开详情 · 拉圆圈到调度器接入"
-                        }
-                        className={`relative block w-full px-3 py-2 text-left text-sm edge-right-box ${
-                          item.status === "running"
-                            ? "terminal-running"
-                            : "terminal-stopped"
-                        } ${
-                          bound
-                            ? `sketch-box sketch-hover ${
-                                index % 2 ? "sketch-b" : "sketch-c"
-                              } ${
-                                String(item.id) === primaryTerminalId
-                                  ? "sketch-active"
-                                  : ""
-                              }`
-                            : "sketch-tray sketch-hover cursor-crosshair border-dashed"
-                        }`}
-                      >
-                        <div className="font-bold">{item.title || item.id}</div>
-                        <div className="text-[10px] text-muted-foreground">
-                          {bound ? "已接入" : "待接入"}
-                        </div>
-                        <span
-                          className="item-del"
-                          title={bound ? "断开该终端" : "删除该终端"}
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            if (bound) {
-                              askConfirm(
-                                `断开终端「${item.title || item.id}」与调度器的连接？`,
-                                () => void handleDisconnect(String(item.id)),
-                              )
-                            }
-                          }}
-                        >
-                          <Trash2 className="size-3" />
-                        </span>
-                        <span
-                          ref={setAnchor(`item-port-${item.id}`) as any}
-                          className="wire-handle"
-                          style={{ left: "-7px", right: "auto" }}
-                          title={
-                            bound ? "连接点" : "按住拉线到调度器接入"
-                          }
-                          onPointerDown={
-                            bound
-                              ? undefined
-                              : (event) => {
-                                  event.stopPropagation()
-                                  startWireDrag(
-                                    event,
-                                    "bind-item",
-                                    String(item.id),
-                                    `item-port-${item.id}`,
-                                  )
-                                }
-                          }
-                        />
-                      </button>
-                    )
-                  })}
+              {terminalGroups.length === 0 ? (
+                <div className="sketch-box sketch-b px-3 py-4 text-center text-xs">
+                  还没有终端，先去项目页创建
                 </div>
-              ))
-            )}
+              ) : (
+                terminalGroups.map((group) => (
+                  <div
+                    key={group.host}
+                    className={`space-y-1 rounded-lg p-1.5 ${group.shade}`}
+                  >
+                    <div
+                      className="truncate px-1 text-[10px] font-bold text-muted-foreground"
+                      title={group.host}
+                    >
+                      {group.host}
+                    </div>
+                    {group.items.map((item: any, index: number) => {
+                      const bound = connectedItemIds.has(String(item.id))
+                      return (
+                        <button
+                          key={item.id}
+                          ref={setAnchor(`item-${item.id}`) as any}
+                          type="button"
+                          onClick={() => {
+                            setSelectedTerminalId(String(item.id))
+                            setTerminalPanelOpen(true)
+                          }}
+                          title={
+                            bound
+                              ? "点击打开交互终端 · 点连线断开"
+                              : "点击打开详情 · 拉圆圈到调度器接入"
+                          }
+                          className={`relative block w-full px-3 py-2 text-left text-sm edge-right-box ${
+                            item.status === "running"
+                              ? "terminal-running"
+                              : "terminal-stopped"
+                          } ${
+                            bound
+                              ? `sketch-box sketch-hover ${
+                                  index % 2 ? "sketch-b" : "sketch-c"
+                                } ${
+                                  String(item.id) === primaryTerminalId
+                                    ? "sketch-active"
+                                    : ""
+                                }`
+                              : "sketch-tray sketch-hover cursor-crosshair border-dashed"
+                          }`}
+                        >
+                          <div className="font-bold">
+                            {item.title || item.id}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">
+                            {bound ? "已接入" : "待接入"}
+                          </div>
+                          <span
+                            className="item-del"
+                            title={bound ? "断开该终端" : "删除该终端"}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              if (bound) {
+                                askConfirm(
+                                  `断开终端「${item.title || item.id}」与调度器的连接？`,
+                                  () => void handleDisconnect(String(item.id)),
+                                )
+                              }
+                            }}
+                          >
+                            <Trash2 className="size-3" />
+                          </span>
+                          <span
+                            ref={setAnchor(`item-port-${item.id}`) as any}
+                            className="wire-handle"
+                            style={{ left: "-7px", right: "auto" }}
+                            title={bound ? "连接点" : "按住拉线到调度器接入"}
+                            onPointerDown={
+                              bound
+                                ? undefined
+                                : (event) => {
+                                    event.stopPropagation()
+                                    startWireDrag(
+                                      event,
+                                      "bind-item",
+                                      String(item.id),
+                                      `item-port-${item.id}`,
+                                    )
+                                  }
+                            }
+                          />
+                        </button>
+                      )
+                    })}
+                  </div>
+                ))
+              )}
             </div>
           </ScrollColumn>
         </section>
       </div>
 
       {robotPluginEnabled ? (
-      <footer className="relative z-10 mt-4 flex flex-shrink-0 items-end justify-center gap-4 px-4 pb-6 pt-3">
-        <span className="bot-tag bot-tag-tool">
-          <CreateRobotDialog
-            platforms={robotPlatforms}
-            iconOnly
-            triggerClassName="btn-add-compact"
-          />
-        </span>
-        {boundBots.length === 0 && unboundBots.length === 0 ? (
-          <div className="sketch-box sketch-c inline-block px-3 py-2 text-xs">
-            还没有机器人
-          </div>
-        ) : null}
-        {boundBots.map((entry: any, index: number) => (
-          <div
-            key={entry.robot.id}
-            ref={setAnchor(`bot-${entry.robot.id}`) as any}
-            title="点击查看机器人详情"
-            className="bot-tag"
-            onClick={() => setBotDetailId(String(entry.robot.id))}
-            style={{ "--tilt": index % 2 ? "1.6deg" : "-1.8deg" } as any}
-          >
-            <span
-              className="item-del"
-              title="删除该机器人"
-              onClick={(event) => {
-                event.stopPropagation()
-                deleteRobotById(entry.robot)
-              }}
-            >
-              <Trash2 className="size-3" />
-            </span>
-            <span
-              className="bot-diagnose-tab"
-              title="诊断机器人链路"
-              onClick={(event) => {
-                event.stopPropagation()
-                void runDiagnose()
-              }}
-            >
-              <Stethoscope className="size-3.5" />
-            </span>
-            <div className="flex items-center gap-1.5 font-bold">
-              <Bot className="size-4" />
-              {entry.robot.name}
-            </div>
-            <div className="text-[10px]">
-              {entry.robot.platform} →{" "}
-              {entry.bindings
-                .map((binding: any) => binding.route_key || binding.item_title)
-                .join(", ")}
-            </div>
-          </div>
-        ))}
-        {unboundBots.map((entry: any, index: number) => (
-          <div
-            key={entry.robot.id}
-            ref={setAnchor(`bot-${entry.robot.id}`) as any}
-            title="点击查看机器人详情"
-            className="bot-tag relative border-dashed"
-            onClick={() => setBotDetailId(String(entry.robot.id))}
-            style={{ "--tilt": index % 2 ? "-1.4deg" : "1.7deg" } as any}
-          >
-            <span
-              className="item-del"
-              title="删除该机器人"
-              onClick={(event) => {
-                event.stopPropagation()
-                deleteRobotById(entry.robot)
-              }}
-            >
-              <Trash2 className="size-3" />
-            </span>
-            <span
-              className="bot-diagnose-tab"
-              title="诊断机器人链路"
-              onClick={(event) => {
-                event.stopPropagation()
-                void runDiagnose()
-              }}
-            >
-              <Stethoscope className="size-3.5" />
-            </span>
-            <span className="flex items-center gap-1.5 font-bold">
-              <Bot className="size-4" />
-              {entry.robot.name}
-            </span>
-            <span className="text-[10px]">{entry.robot.platform}</span>
-            <span
-              className="wire-handle"
-              style={{ top: "-7px", left: "50%", marginLeft: "-6px", right: "auto", marginTop: "0" }}
-              onPointerDown={(event) => {
-                event.stopPropagation()
-                startWireDrag(
-                  event,
-                  "bind-bot",
-                  String(entry.robot.id),
-                  `bot-${entry.robot.id}`,
-                )
-              }}
+        <footer className="relative z-10 mt-4 flex flex-shrink-0 items-end justify-center gap-4 px-4 pb-6 pt-3">
+          <span className="bot-tag bot-tag-tool">
+            <CreateRobotDialog
+              platforms={robotPlatforms}
+              iconOnly
+              triggerClassName="btn-add-compact"
             />
-          </div>
-        ))}
-      </footer>
+          </span>
+          {boundBots.length === 0 && unboundBots.length === 0 ? (
+            <div className="sketch-box sketch-c inline-block px-3 py-2 text-xs">
+              还没有机器人
+            </div>
+          ) : null}
+          {boundBots.map((entry: any, index: number) => (
+            <div
+              key={entry.robot.id}
+              ref={setAnchor(`bot-${entry.robot.id}`) as any}
+              title="点击查看机器人详情"
+              className="bot-tag"
+              onClick={() => setBotDetailId(String(entry.robot.id))}
+              style={{ "--tilt": index % 2 ? "1.6deg" : "-1.8deg" } as any}
+            >
+              <span
+                className="item-del"
+                title="删除该机器人"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  deleteRobotById(entry.robot)
+                }}
+              >
+                <Trash2 className="size-3" />
+              </span>
+              <span
+                className="bot-diagnose-tab"
+                title="诊断机器人链路"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  void runDiagnose()
+                }}
+              >
+                <Stethoscope className="size-3.5" />
+              </span>
+              <div className="flex items-center gap-1.5 font-bold">
+                <Bot className="size-4" />
+                {entry.robot.name}
+              </div>
+              <div className="text-[10px]">
+                {entry.robot.platform} →{" "}
+                {entry.bindings
+                  .map(
+                    (binding: any) => binding.route_key || binding.item_title,
+                  )
+                  .join(", ")}
+              </div>
+            </div>
+          ))}
+          {unboundBots.map((entry: any, index: number) => (
+            <div
+              key={entry.robot.id}
+              ref={setAnchor(`bot-${entry.robot.id}`) as any}
+              title="点击查看机器人详情"
+              className="bot-tag relative border-dashed"
+              onClick={() => setBotDetailId(String(entry.robot.id))}
+              style={{ "--tilt": index % 2 ? "-1.4deg" : "1.7deg" } as any}
+            >
+              <span
+                className="item-del"
+                title="删除该机器人"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  deleteRobotById(entry.robot)
+                }}
+              >
+                <Trash2 className="size-3" />
+              </span>
+              <span
+                className="bot-diagnose-tab"
+                title="诊断机器人链路"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  void runDiagnose()
+                }}
+              >
+                <Stethoscope className="size-3.5" />
+              </span>
+              <span className="flex items-center gap-1.5 font-bold">
+                <Bot className="size-4" />
+                {entry.robot.name}
+              </span>
+              <span className="text-[10px]">{entry.robot.platform}</span>
+              <span
+                className="wire-handle"
+                style={{
+                  top: "-7px",
+                  left: "50%",
+                  marginLeft: "-6px",
+                  right: "auto",
+                  marginTop: "0",
+                }}
+                onPointerDown={(event) => {
+                  event.stopPropagation()
+                  startWireDrag(
+                    event,
+                    "bind-bot",
+                    String(entry.robot.id),
+                    `bot-${entry.robot.id}`,
+                  )
+                }}
+              />
+            </div>
+          ))}
+        </footer>
       ) : null}
 
       {diagnoseOpen ? (
@@ -1629,10 +1692,7 @@ export function TerminalDispatcherBoard({
       ) : null}
 
       {confirmState ? (
-        <div
-          className="confirm-backdrop"
-          onClick={() => setConfirmState(null)}
-        >
+        <div className="confirm-backdrop" onClick={() => setConfirmState(null)}>
           <div
             className="confirm-card sketch-box sketch-a"
             onClick={(event) => event.stopPropagation()}
@@ -1662,268 +1722,276 @@ export function TerminalDispatcherBoard({
         </div>
       ) : null}
 
-      {botDetailId ? (
-        createPortal(
-        <div className="bot-detail-panel">
-          <div className="flex items-center gap-2 border-b-2 border-[#3a3a3a] bg-white px-3 py-2">
-            <button
-              type="button"
-              onClick={() => setBotDetailId(null)}
-              className="sketch-box sketch-c flex items-center gap-1 px-2 py-1 text-xs font-bold hover:bg-stone-100"
-            >
-              ← 返回
-            </button>
-            <div className="flex items-center gap-2 text-sm font-black">
-              <Bot className="size-4" />
-              机器人详情
-            </div>
-          </div>
-          <div className="hang-page min-h-0 flex-1 overflow-y-auto">
-            <RobotDetail robotId={botDetailId} />
-          </div>
-        </div>,
-        document.body,
-        )
-      ) : null}
+      {botDetailId
+        ? createPortal(
+            <div className="bot-detail-panel">
+              <div className="flex items-center gap-2 border-b-2 border-[#3a3a3a] bg-white px-3 py-2">
+                <button
+                  type="button"
+                  onClick={() => setBotDetailId(null)}
+                  className="sketch-box sketch-c flex items-center gap-1 px-2 py-1 text-xs font-bold hover:bg-stone-100"
+                >
+                  ← 返回
+                </button>
+                <div className="flex items-center gap-2 text-sm font-black">
+                  <Bot className="size-4" />
+                  机器人详情
+                </div>
+              </div>
+              <div className="hang-page min-h-0 flex-1 overflow-y-auto">
+                <RobotDetail robotId={botDetailId} />
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
 
-      {terminalPanelOpen ? (
-        createPortal(
-        <div className="terminal-fullscreen">
-          <div className="terminal-fullscreen-header">
-            <button
-              type="button"
-              onClick={() => {
-                setTerminalPanelOpen(false)
-              }}
-              className="sketch-box sketch-c flex items-center gap-1 px-2 py-1 text-xs font-bold hover:bg-stone-100"
-            >
-              ← 返回
-            </button>
-            <div className="flex items-center gap-2 text-sm font-black">
-              <Terminal className="size-4" />
-              主交互终端
-            </div>
-            <span className="text-xs text-muted-foreground">
-              {primaryTerminalTitle || "未绑定终端"}
-            </span>
-            {primaryTerminalStatus ? (
-              <span
-                className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                  primaryTerminalStatus === "running"
-                    ? "bg-emerald-100 text-emerald-700"
-                    : primaryTerminalStatus === "error"
-                      ? "bg-red-100 text-red-700"
-                      : "bg-stone-200 text-stone-600"
-                }`}
-              >
-                {primaryTerminalStatus === "running"
-                  ? "运行中"
-                  : primaryTerminalStatus === "starting"
-                    ? "启动中"
-                    : primaryTerminalStatus === "stopping"
-                      ? "停止中"
-                      : primaryTerminalStatus === "stopped"
-                        ? "已停止"
-                        : primaryTerminalStatus === "error"
-                          ? "错误"
-                          : primaryTerminalStatus}
-              </span>
-            ) : null}
-            {primaryTerminalId ? (
-              <div className="flex items-center gap-1.5">
+      {terminalPanelOpen
+        ? createPortal(
+            <div className="terminal-fullscreen">
+              <div className="terminal-fullscreen-header">
                 <button
                   type="button"
-                  disabled={itemAction !== null}
-                  onClick={() => void handleItemAction("start")}
-                  className="sketch-box sketch-c flex items-center gap-1 px-2 py-1 text-xs font-bold hover:bg-emerald-50 disabled:opacity-50"
+                  onClick={() => {
+                    setTerminalPanelOpen(false)
+                  }}
+                  className="sketch-box sketch-c flex items-center gap-1 px-2 py-1 text-xs font-bold hover:bg-stone-100"
                 >
-                  {itemAction === "start" ? (
-                    <Loader2 className="size-3 animate-spin" />
-                  ) : null}
-                  启动
+                  ← 返回
                 </button>
-                <button
-                  type="button"
-                  disabled={itemAction !== null}
-                  onClick={() => void handleItemAction("stop")}
-                  className="sketch-box sketch-c flex items-center gap-1 px-2 py-1 text-xs font-bold hover:bg-amber-50 disabled:opacity-50"
-                >
-                  {itemAction === "stop" ? (
-                    <Loader2 className="size-3 animate-spin" />
-                  ) : null}
-                  停止
-                </button>
-                <button
-                  type="button"
-                  disabled={itemAction !== null}
-                  onClick={() => void handleItemAction("restart")}
-                  className="sketch-box sketch-c flex items-center gap-1 px-2 py-1 text-xs font-bold hover:bg-sky-50 disabled:opacity-50"
-                >
-                  {itemAction === "restart" ? (
-                    <Loader2 className="size-3 animate-spin" />
-                  ) : null}
-                  重启
-                </button>
-              </div>
-            ) : null}
-            <div className="flex-1" />
-            <button
-              type="button"
-              onClick={() => setPanelSettingsOpen((v) => !v)}
-              className="text-xs font-bold hover:underline"
-            >
-              {panelSettingsOpen ? "▾" : "▸"} 终端功能设置
-            </button>
-          </div>
-          {panelSettingsOpen ? (
-            <div className="border-b-2 border-[#3a3a3a] bg-white px-3 py-2">
-              <div className="sketch-box sketch-b mt-1 space-y-2 p-3 text-sm">
-                <div className="font-bold">
-                  当前终端：{primaryTerminalTitle || "未绑定"}
-                  <span className="ml-1 text-[10px] font-normal">
-                    {primaryTerminalId ? `#${primaryTerminalId.slice(0, 8)}` : ""}
-                  </span>
+                <div className="flex items-center gap-2 text-sm font-black">
+                  <Terminal className="size-4" />
+                  主交互终端
                 </div>
-                {connectedItemsList.length > 1 ? (
-                  <label className="flex items-center gap-2 text-xs">
-                    切换主终端：
-                    <select
-                      className="rounded border border-[#3a3a3a] bg-white px-2 py-1"
-                      value={primaryTerminalId}
-                      onChange={(event) =>
-                        setSelectedTerminalId(event.target.value)
-                      }
-                    >
-                      {connectedItemsList.map((item: any) => (
-                        <option key={item.id} value={String(item.id)}>
-                          {item.title || item.id}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : null}
-                <div className="flex flex-wrap gap-2 text-xs font-bold">
-                  {primaryTerminalId ? (
-                    <button
-                      type="button"
-                      className="sketch-box sketch-c px-2 py-1 hover:bg-red-50"
-                      onClick={() => {
-                        askConfirm(
-                          `从调度器断开终端「${primaryTerminalTitle}」？`,
-                          () => {
-                            setTerminalPanelOpen(false)
-                            void handleDisconnect(primaryTerminalId)
-                          },
-                        )
-                      }}
-                    >
-                      ✂ 解绑此终端
-                    </button>
-                  ) : (
-                    <span className="font-normal">先在左侧接入一个终端</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          ) : null}
-          <div className="terminal-fullscreen-body terminal-body-3col">
-            <div className="terminal-frame">
-              <div className="terminal-titlebar">
-                <span className="dot" />
-                <span className="dot" />
-                <span className="dot" />
-                <span className="ml-2 text-[11px]">
+                <span className="text-xs text-muted-foreground">
                   {primaryTerminalTitle || "未绑定终端"}
                 </span>
-                <span className="ml-auto pr-1 text-[10px] font-bold text-stone-400">
-                  终端输出
-                </span>
-              </div>
-              <div className="terminal-body" style={{ minHeight: 0 }}>
-                {primaryTerminalId ? (
-                  <TerminalOutputPanel
-                    key={primaryTerminalId}
-                    itemId={primaryTerminalId}
-                    running={primaryTerminalStatus === "running"}
-                  />
-                ) : (
-                  <div className="p-6 text-center text-xs">
-                    先在左侧接入一个终端
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="terminal-frame">
-              <div className="terminal-titlebar terminal-titlebar-light">
-                <span className="text-[11px] font-bold">
-                  {terminalFeatures.find((f) => f.key === mainView)?.title ??
-                    ""}
-                </span>
-              </div>
-              <div className="terminal-body" style={{ minHeight: 0 }}>
-                {primaryTerminalId ? (
-                  mainView === "chat" ? (
-                    <ChatPanel itemId={primaryTerminalId} />
-                  ) : (
-                    <div
-                      className={
-                        mainView === "files"
-                          ? "h-full min-h-0 bg-white/70 p-3 backdrop-blur-sm"
-                          : "h-full min-h-0 overflow-y-auto bg-white/70 p-3 backdrop-blur-sm"
-                      }
-                    >
-                      {mainView === "ws" ? (
-                        <TerminalWsPanel
-                          itemId={primaryTerminalId}
-                          itemTitle={primaryTerminalTitle || "终端"}
-                        />
-                      ) : mainView === "qq" ? (
-                        <RobotConversationDebugPanel itemId={primaryTerminalId} />
-                      ) : mainView === "files" ? (
-                        <ItemFilesPanel itemId={primaryTerminalId} />
-                      ) : mainView === "filters" ? (
-                        <ItemFiltersPanel itemId={primaryTerminalId} />
-                      ) : mainView === "config" ? (
-                        <ItemConfigPanel itemId={primaryTerminalId} />
-                      ) : mainView === "handlers" ? (
-                        <ItemHandlersList itemId={primaryTerminalId} />
-                      ) : mainView === "tasks" ? (
-                        <ScheduledTasksManager itemId={primaryTerminalId} />
-                      ) : mainView === "token" ? (
-                        <TokenUsagePanel itemId={primaryTerminalId} />
-                      ) : null}
-                    </div>
-                  )
-                ) : (
-                  <div className="p-6 text-center text-xs">
-                    先在左侧接入一个终端
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="feature-icon-rail">
-              {terminalFeatures
-                .filter((feature) => feature.key !== "output")
-                .map((feature) => (
-                  <button
-                    key={feature.key}
-                    type="button"
-                    onClick={() => setMainView(feature.key)}
-                    title={feature.title}
-                    className={`feature-icon-btn ${
-                      mainView === feature.key ? "feature-icon-active" : ""
+                {primaryTerminalStatus ? (
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                      primaryTerminalStatus === "running"
+                        ? "bg-emerald-100 text-emerald-700"
+                        : primaryTerminalStatus === "error"
+                          ? "bg-red-100 text-red-700"
+                          : "bg-stone-200 text-stone-600"
                     }`}
                   >
-                    {feature.icon}
-                    <span className="feature-icon-label">{feature.title}</span>
-                  </button>
-                ))}
-            </div>
-          </div>
-        </div>,
-        document.body,
-        )
-      ) : null}
+                    {primaryTerminalStatus === "running"
+                      ? "运行中"
+                      : primaryTerminalStatus === "starting"
+                        ? "启动中"
+                        : primaryTerminalStatus === "stopping"
+                          ? "停止中"
+                          : primaryTerminalStatus === "stopped"
+                            ? "已停止"
+                            : primaryTerminalStatus === "error"
+                              ? "错误"
+                              : primaryTerminalStatus}
+                  </span>
+                ) : null}
+                {primaryTerminalId ? (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={itemAction !== null}
+                      onClick={() => void handleItemAction("start")}
+                      className="sketch-box sketch-c flex items-center gap-1 px-2 py-1 text-xs font-bold hover:bg-emerald-50 disabled:opacity-50"
+                    >
+                      {itemAction === "start" ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : null}
+                      启动
+                    </button>
+                    <button
+                      type="button"
+                      disabled={itemAction !== null}
+                      onClick={() => void handleItemAction("stop")}
+                      className="sketch-box sketch-c flex items-center gap-1 px-2 py-1 text-xs font-bold hover:bg-amber-50 disabled:opacity-50"
+                    >
+                      {itemAction === "stop" ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : null}
+                      停止
+                    </button>
+                    <button
+                      type="button"
+                      disabled={itemAction !== null}
+                      onClick={() => void handleItemAction("restart")}
+                      className="sketch-box sketch-c flex items-center gap-1 px-2 py-1 text-xs font-bold hover:bg-sky-50 disabled:opacity-50"
+                    >
+                      {itemAction === "restart" ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : null}
+                      重启
+                    </button>
+                  </div>
+                ) : null}
+                <div className="flex-1" />
+                <button
+                  type="button"
+                  onClick={() => setPanelSettingsOpen((v) => !v)}
+                  className="text-xs font-bold hover:underline"
+                >
+                  {panelSettingsOpen ? "▾" : "▸"} 终端功能设置
+                </button>
+              </div>
+              {panelSettingsOpen ? (
+                <div className="border-b-2 border-[#3a3a3a] bg-white px-3 py-2">
+                  <div className="sketch-box sketch-b mt-1 space-y-2 p-3 text-sm">
+                    <div className="font-bold">
+                      当前终端：{primaryTerminalTitle || "未绑定"}
+                      <span className="ml-1 text-[10px] font-normal">
+                        {primaryTerminalId
+                          ? `#${primaryTerminalId.slice(0, 8)}`
+                          : ""}
+                      </span>
+                    </div>
+                    {connectedItemsList.length > 1 ? (
+                      <label className="flex items-center gap-2 text-xs">
+                        切换主终端：
+                        <select
+                          className="rounded border border-[#3a3a3a] bg-white px-2 py-1"
+                          value={primaryTerminalId}
+                          onChange={(event) =>
+                            setSelectedTerminalId(event.target.value)
+                          }
+                        >
+                          {connectedItemsList.map((item: any) => (
+                            <option key={item.id} value={String(item.id)}>
+                              {item.title || item.id}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    <div className="flex flex-wrap gap-2 text-xs font-bold">
+                      {primaryTerminalId ? (
+                        <button
+                          type="button"
+                          className="sketch-box sketch-c px-2 py-1 hover:bg-red-50"
+                          onClick={() => {
+                            askConfirm(
+                              `从调度器断开终端「${primaryTerminalTitle}」？`,
+                              () => {
+                                setTerminalPanelOpen(false)
+                                void handleDisconnect(primaryTerminalId)
+                              },
+                            )
+                          }}
+                        >
+                          ✂ 解绑此终端
+                        </button>
+                      ) : (
+                        <span className="font-normal">
+                          先在左侧接入一个终端
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+              <div className="terminal-fullscreen-body terminal-body-3col">
+                <div className="terminal-frame">
+                  <div className="terminal-titlebar">
+                    <span className="dot" />
+                    <span className="dot" />
+                    <span className="dot" />
+                    <span className="ml-2 text-[11px]">
+                      {primaryTerminalTitle || "未绑定终端"}
+                    </span>
+                    <span className="ml-auto pr-1 text-[10px] font-bold text-stone-400">
+                      终端输出
+                    </span>
+                  </div>
+                  <div className="terminal-body" style={{ minHeight: 0 }}>
+                    {primaryTerminalId ? (
+                      <TerminalOutputPanel
+                        key={primaryTerminalId}
+                        itemId={primaryTerminalId}
+                        running={primaryTerminalStatus === "running"}
+                      />
+                    ) : (
+                      <div className="p-6 text-center text-xs">
+                        先在左侧接入一个终端
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="terminal-frame">
+                  <div className="terminal-titlebar terminal-titlebar-light">
+                    <span className="text-[11px] font-bold">
+                      {terminalFeatures.find((f) => f.key === mainView)
+                        ?.title ?? ""}
+                    </span>
+                  </div>
+                  <div className="terminal-body" style={{ minHeight: 0 }}>
+                    {primaryTerminalId ? (
+                      mainView === "chat" ? (
+                        <ChatPanel itemId={primaryTerminalId} />
+                      ) : (
+                        <div
+                          className={
+                            mainView === "files"
+                              ? "h-full min-h-0 bg-white/70 p-3 backdrop-blur-sm"
+                              : "h-full min-h-0 overflow-y-auto bg-white/70 p-3 backdrop-blur-sm"
+                          }
+                        >
+                          {mainView === "ws" ? (
+                            <TerminalWsPanel
+                              itemId={primaryTerminalId}
+                              itemTitle={primaryTerminalTitle || "终端"}
+                            />
+                          ) : mainView === "qq" ? (
+                            <RobotConversationDebugPanel
+                              itemId={primaryTerminalId}
+                            />
+                          ) : mainView === "files" ? (
+                            <ItemFilesPanel itemId={primaryTerminalId} />
+                          ) : mainView === "filters" ? (
+                            <ItemFiltersPanel itemId={primaryTerminalId} />
+                          ) : mainView === "config" ? (
+                            <ItemConfigPanel itemId={primaryTerminalId} />
+                          ) : mainView === "handlers" ? (
+                            <ItemHandlersList itemId={primaryTerminalId} />
+                          ) : mainView === "tasks" ? (
+                            <ScheduledTasksManager itemId={primaryTerminalId} />
+                          ) : mainView === "token" ? (
+                            <TokenUsagePanel itemId={primaryTerminalId} />
+                          ) : null}
+                        </div>
+                      )
+                    ) : (
+                      <div className="p-6 text-center text-xs">
+                        先在左侧接入一个终端
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="feature-icon-rail">
+                  {terminalFeatures
+                    .filter((feature) => feature.key !== "output")
+                    .map((feature) => (
+                      <button
+                        key={feature.key}
+                        type="button"
+                        onClick={() => setMainView(feature.key)}
+                        title={feature.title}
+                        className={`feature-icon-btn ${
+                          mainView === feature.key ? "feature-icon-active" : ""
+                        }`}
+                      >
+                        {feature.icon}
+                        <span className="feature-icon-label">
+                          {feature.title}
+                        </span>
+                      </button>
+                    ))}
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
 
       {expandedCardData ? (
         <div className="zoom-backdrop" onClick={() => setExpandedCard(null)}>
@@ -1970,10 +2038,9 @@ function TerminalDispatcherPage() {
 
   return (
     <div
-      className="flex flex-col overflow-hidden text-zinc-900"
+      className="full-bleed flex flex-col overflow-hidden text-zinc-900"
       style={{
         height: "calc(100svh - 79px)",
-        margin: "-22px -18px -40px",
       }}
     >
       <TerminalDispatcherBoard

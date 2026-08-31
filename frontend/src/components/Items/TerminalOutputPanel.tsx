@@ -22,21 +22,15 @@ export function TerminalOutputPanel({
   const [command, setCommand] = useState("")
   const outputRef = useRef<HTMLDivElement | null>(null)
   const stickToBottomRef = useRef(true)
-  const {
-    isConnected,
-    isConnecting,
-    error,
-    output,
-    sendCommand,
-    reconnect,
-  } = useTerminalConnection({ itemId, enabled: running })
+  const { isConnected, isConnecting, error, output, sendCommand, reconnect } =
+    useTerminalConnection({ itemId, enabled: running })
 
   useEffect(() => {
     const el = outputRef.current
     if (el && stickToBottomRef.current) {
       el.scrollTop = el.scrollHeight
     }
-  }, [output])
+  }, [])
 
   const handleSend = () => {
     const trimmed = command.trim()
@@ -64,7 +58,7 @@ export function TerminalOutputPanel({
           stickToBottomRef.current =
             el.scrollHeight - el.scrollTop - el.clientHeight < 64
         }}
-        className="min-h-0 flex-1 overflow-y-auto px-4 py-3 font-mono text-[13px] leading-[1.45]"
+        className="min-h-0 flex-1 overflow-auto px-4 py-3 font-mono text-[13px] leading-[1.45]"
       >
         {isConnecting ? (
           <div className="flex h-full flex-col items-center justify-center gap-3">

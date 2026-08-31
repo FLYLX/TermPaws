@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
 import {
+  ArrowLeft,
   Bot,
   CheckCircle2,
   Plug,
@@ -20,9 +21,9 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import useAuth from "@/hooks/useAuth"
 import useCustomToast from "@/hooks/useCustomToast"
 import {
+  getPluginsQueryOptions,
   type PluginItem,
   type PluginListResponse,
-  getPluginsQueryOptions,
   requestPluginApi,
 } from "@/lib/plugins-api"
 
@@ -116,8 +117,12 @@ function PluginsPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-180px)] min-h-[420px] overflow-hidden rounded-lg border">
-      <div className="flex w-80 shrink-0 flex-col border-r bg-muted/30">
+    <div className="flex h-[calc(100svh-180px)] min-h-[420px] flex-col overflow-hidden rounded-lg border md:flex-row">
+      <div
+        className={`w-full flex-col border-b bg-muted/30 md:flex md:w-80 md:shrink-0 md:border-b-0 md:border-r ${
+          selectedPlugin ? "hidden" : "flex"
+        }`}
+      >
         <div className="shrink-0 space-y-2 border-b p-3">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">Plugin Market</h2>
@@ -197,13 +202,16 @@ function PluginsPage() {
         </ScrollArea>
       </div>
 
-      <div className="min-w-0 flex-1">
+      <div
+        className={`min-h-0 min-w-0 flex-1 ${selectedPlugin ? "" : "hidden md:block"}`}
+      >
         {selectedPlugin ? (
           <PluginDetail
             plugin={selectedPlugin}
             canManage={Boolean(currentUser?.is_superuser)}
             isBusy={actionPluginId === selectedPlugin.plugin_id}
             onToggle={() => void togglePlugin(selectedPlugin)}
+            onBack={() => setSelectedPluginId(null)}
           />
         ) : (
           <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
@@ -221,29 +229,43 @@ function PluginDetail({
   canManage,
   isBusy,
   onToggle,
+  onBack,
 }: {
   plugin: PluginItem
   canManage: boolean
   isBusy: boolean
   onToggle: () => void
+  onBack: () => void
 }) {
   const Icon = pluginIcon(plugin)
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 flex-col gap-3 border-b bg-muted/30 p-4 md:flex-row md:items-start md:justify-between">
-        <div className="flex min-w-0 items-start gap-3">
-          <div className="rounded-md border bg-background p-2">
-            <Icon className="size-5 text-muted-foreground" />
-          </div>
-          <div className="min-w-0">
-            <h1 className="truncate text-xl font-semibold">{plugin.name}</h1>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <code className="rounded bg-muted px-1.5 py-0.5">
-                {plugin.plugin_id}
-              </code>
-              <Badge variant="outline">{plugin.category}</Badge>
-              <Badge variant="secondary">{plugin.version}</Badge>
-              {plugin.builtin && <Badge variant="secondary">Built-in</Badge>}
+        <div className="flex min-w-0 items-start gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="shrink-0 md:hidden"
+            onClick={onBack}
+            title="返回列表"
+          >
+            <ArrowLeft className="size-4" />
+          </Button>
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="rounded-md border bg-background p-2">
+              <Icon className="size-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="truncate text-xl font-semibold">{plugin.name}</h1>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <code className="rounded bg-muted px-1.5 py-0.5">
+                  {plugin.plugin_id}
+                </code>
+                <Badge variant="outline">{plugin.category}</Badge>
+                <Badge variant="secondary">{plugin.version}</Badge>
+                {plugin.builtin && <Badge variant="secondary">Built-in</Badge>}
+              </div>
             </div>
           </div>
         </div>
@@ -265,7 +287,7 @@ function PluginDetail({
         </Button>
       </div>
 
-      <div className="space-y-4 p-4">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
         <section className="space-y-2">
           <h2 className="text-sm font-semibold">Overview</h2>
           <p className="max-w-3xl text-sm text-muted-foreground">
@@ -282,7 +304,10 @@ function PluginDetail({
             label="Default State"
             value={plugin.default_enabled ? "Enabled" : "Disabled"}
           />
-          <InfoTile label="Source" value={plugin.builtin ? "Built-in" : "Local"} />
+          <InfoTile
+            label="Source"
+            value={plugin.builtin ? "Built-in" : "Local"}
+          />
           <InfoTile
             label="Configurable"
             value={plugin.configurable ? "Yes" : "No"}

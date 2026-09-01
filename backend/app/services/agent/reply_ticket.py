@@ -268,6 +268,10 @@ class ReplyTicketManager:
             ticket_id
             for ticket_id, ticket in self._tickets.items()
             if ticket.updated_at < cutoff
+            # 长任务保护：计划未完成或还有后台 job 在等的票据不是"卡死",
+            # 只是活得久——删除会让 6h+ 的任务在任何新消息到来时凭空消失。
+            and not plan_has_open_steps(ticket.plan)
+            and not ticket.pending_job_ids
         ]
         for ticket_id in stale_ids:
             self._tickets.pop(ticket_id, None)

@@ -537,6 +537,38 @@ def test_cancel_plan_terminates_plan_permanently() -> None:
     assert manager.cancel_plan("missing") is None
 
 
+def test_prune_protects_open_plan_and_pending_jobs_beyond_ttl() -> None:
+    """6h TTL prune 不得删除还有未完成计划或待收 job 的票据。"""
+    from app.services.agent.reply_ticket import TICKET_TTL
+
+    manager = ReplyTicketManager()
+    agent = SimpleNamespace(
+        _context=SimpleNamespace(
+            robot_id="",
+            robot_context_token="",
+            reply_ticket_id="",
+        )
+    )
+    with_plan = manager.create_for_agent(
+        agent, item_id="item-1", handler_id="h", message="a", source_type="web"
+    )
+    manager.update_ticket_plan(with_plan.ticket_id, [{"step": "s", "status": "pending"}])
+    with_job = manager.create_for_agent(
+        agent, item_id="item-1", handler_id="h", message="b", source_type="web"
+    )
+    manager.add_pending_job(with_job.ticket_id, "job-1")
+    plain = manager.create_for_agent(
+        agent, item_id="item-1", handler_id="h", message="c", source_type="web"
+    )
+    for t in (with_plan, with_job, plain):
+        t.updated_at -= TICKET_TTL + timedelta(hours=2)
+
+    manager._prune_locked(datetime.now())
+    assert manager.get(with_plan.ticket_id) is not None
+    assert manager.get(with_job.ticket_id) is not None
+    assert manager.get(plain.ticket_id) is None
+
+
 def test_prune_tolerates_aware_restored_timestamps() -> None:
     from datetime import timezone
 

@@ -532,6 +532,10 @@ class RobotService:
                 poll = {"success": False, "error": "fetch failed"}
             status = str(poll.get("status") or "")
             if poll.get("success") and status == "running":
+                # job 还在正常跑：touch 票据保持新鲜。否则纯等待期间没有
+                # 轮次迭代刷新 updated_at，30 分钟 FRESH 窗口会把还在正常
+                # 执行的计划从条带上隐藏，看起来像任务消失了。
+                reply_ticket_manager.touch(ticket.ticket_id)
                 continue
             if (
                 poll.get("success")

@@ -555,6 +555,59 @@ class ReplyTicketManager:
             _persist_ticket(ticket)
             return ticket
 
+    def supersede_plan(self, ticket_ref: str, item_id: str) -> list[dict] | None:
+        """关闭同一任务旧票据上的计划（agent 接管任务时调用）。
+
+        支持完整 id 或唯一前缀（提示词里只暴露前 8 位）。步骤标记
+        cancelled 后清除并持久化+广播——旧计划立即从条带消失，
+        不会被 resume sweep 续跑。无匹配返回 None。
+        """
+        ref = str(ticket_ref or "").strip()
+        if not ref:
+            return None
+        with self._lock:
+            ticket = self._tickets.get(self._resolve_ticket_id_locked(ref))
+            if ticket is None:
+                matches = [
+                    t
+                    for t in self._tickets.values()
+                    if t.item_id == str(item_id)
+                    and t.ticket_id.startswith(ref)
+                    and t.plan
+                ]
+                ticket = matches[0] if len(matches) == 1 else None
+            if ticket is None or not ticket.plan:
+                return None
+            finalized = [
+                {
+                    **step,
+                    "status": (
+                        step.get("status")
+                        if str(step.get("status")) in {"completed", "cancelled"}
+                        else "cancelled"
+                    ),
+                }
+                for step in ticket.plan
+            ]
+            ticket.plan = []
+            ticket.updated_at = datetime.now()
+            _persist_ticket(ticket)
+        try:
+            from app.services.agent.stream_manager import stream_manager
+
+            stream_manager.broadcast_chat_event(
+                ticket.item_id,
+                {
+                    "type": "plan_updated",
+                    "item_id": ticket.item_id,
+                    "plan": finalized,
+                    "explanation": "superseded",
+                },
+            )
+        except Exception:
+            pass
+        return finalized
+
     def add_pending_job(self, ticket_id: str, job_id: str) -> None:
         if not ticket_id or not job_id:
             return

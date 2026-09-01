@@ -346,6 +346,14 @@ class LocalMCPServer:
                 "properties": {
                     "item_id": {"type": "string", "description": "Current terminal item id."},
                     "explanation": {"type": "string", "description": "Optional note about what changed."},
+                    "supersede_ticket_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "计划 id 列表：这些旧票据上的计划与本次是同一任务，"
+                            "关闭它们（步骤标记取消并清除），把任务接管到当前票据。"
+                        ),
+                    },
                     "plan": {
                         "type": "array",
                         "items": {
@@ -1014,6 +1022,11 @@ class LocalMCPServer:
         item_id = str(args.get("item_id") or "").strip()
         reply_ticket_id = str(args.get("_reply_ticket_id") or "").strip()
         plan = args.get("plan")
+        supersede_ticket_ids = [
+            str(value or "").strip()
+            for value in (args.get("supersede_ticket_ids") or [])
+            if str(value or "").strip()
+        ]
         if not item_id:
             return [{"type": "text", "text": "Error: item_id required"}]
 
@@ -1054,6 +1067,17 @@ class LocalMCPServer:
                     ),
                 }
             ]
+
+        # 接管同任务旧计划：关闭旧票据上的计划，条带立即去重。
+        superseded_notes: list[str] = []
+        for ref in supersede_ticket_ids:
+            if ticket.ticket_id == ref or ticket.ticket_id.startswith(ref):
+                continue
+            finalized = reply_ticket_manager.supersede_plan(ref, item_id)
+            if finalized is not None:
+                superseded_notes.append(
+                    f"已关闭旧计划 {ref[:8]}（{len(finalized)} 个步骤标记取消）"
+                )
 
         # plan=[] means "task done" — mark all remaining steps as completed
         # and keep the plan on the ticket for UI history.
@@ -1134,6 +1158,7 @@ class LocalMCPServer:
             f"  {index}. [{item['status']}] {item['step']}"
             for index, item in enumerate(normalized, start=1)
         )
+        lines.extend(superseded_notes)
         if explanation:
             lines.append(f"Note: {explanation}")
         if all(item["status"] == "completed" for item in normalized):

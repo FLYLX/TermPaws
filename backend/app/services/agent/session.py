@@ -2978,7 +2978,53 @@ class AgentSession:
                 self.item_id,
             )
         self.inject_active_jobs_prompt_context(messages)
+        self.inject_open_plans_prompt_context(
+            messages, exclude_ticket_id=input_msg.reply_ticket_id
+        )
         return messages
+
+    def inject_open_plans_prompt_context(
+        self, messages: list[dict], exclude_ticket_id: str = ""
+    ) -> None:
+        """新轮次必须看到同 item 其他票据上还在进行的计划——否则用户
+        重复发送同一任务时 agent 会毫不知情地再建一份一模一样的计划，
+        条带出现重复任务、两份计划互相抢进度。"""
+        try:
+            from app.services.agent.reply_ticket import reply_ticket_manager
+
+            others = [
+                entry
+                for entry in reply_ticket_manager.active_plans_for_item(self.item_id)
+                if str(entry.get("ticket_id") or "") != str(exclude_ticket_id or "")
+            ]
+        except Exception:
+            return
+        if not others:
+            return
+        lines = ["该终端已有进行中的任务计划（来自之前的消息）："]
+        for entry in others[:3]:
+            steps = entry.get("plan") or []
+            done = sum(
+                1
+                for s in steps
+                if str(s.get("status")) in {"completed", "cancelled"}
+            )
+            lines.append(
+                f"- 计划 {str(entry.get('ticket_id'))[:8]}："
+                f"「{str(entry.get('request') or '')[:60]}」（{done}/{len(steps)} 已完成）"
+            )
+            for s in steps:
+                if str(s.get("status")) not in {"completed", "cancelled"}:
+                    lines.append(f"    [{s.get('status')}] {str(s.get('step') or '')[:50]}")
+        lines.append(
+            "如果用户这条消息与上面某个计划是同一个任务：不要新建计划，直接继续执行该计划，"
+            "并用 update_plan 的 supersede_ticket_ids 参数（填入上面的计划 id）关闭旧计划，"
+            "把它接管到你当前的票据上；只有确认是不同任务才新建独立计划。"
+        )
+        messages.insert(
+            max(len(messages) - 1, 0),
+            {"role": "system", "content": "\n".join(lines)},
+        )
 
     def _get_skill_prompt(
         self,

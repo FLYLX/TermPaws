@@ -465,6 +465,46 @@ def test_touch_refreshes_ticket_activity() -> None:
     manager.touch("")
 
 
+def test_supersede_plan_closes_old_plan_by_prefix() -> None:
+    manager = ReplyTicketManager()
+    agent = SimpleNamespace(
+        _context=SimpleNamespace(
+            robot_id="",
+            robot_context_token="",
+            reply_ticket_id="",
+        )
+    )
+    old = manager.create_for_agent(
+        agent,
+        item_id="item-1",
+        handler_id="handler-1",
+        message="install java",
+        source_type="web",
+    )
+    manager.update_ticket_plan(
+        old.ticket_id,
+        [
+            {"step": "apt update", "status": "completed"},
+            {"step": "install jdk", "status": "in_progress"},
+        ],
+    )
+    # 完整 id 关闭
+    finalized = manager.supersede_plan(old.ticket_id, "item-1")
+    assert finalized is not None
+    assert finalized[0]["status"] == "completed"
+    assert finalized[1]["status"] == "cancelled"
+    assert old.plan == []
+
+    # 前缀匹配 + 幂等
+    manager.update_ticket_plan(old.ticket_id, [{"step": "retry", "status": "pending"}])
+    finalized = manager.supersede_plan(old.ticket_id[:8], "item-1")
+    assert finalized is not None and finalized[0]["status"] == "cancelled"
+    assert manager.supersede_plan(old.ticket_id[:8], "item-1") is None
+    assert manager.supersede_plan("nonexistent", "item-1") is None
+    # 其他 item 的同前缀票据不被误伤
+    assert manager.supersede_plan(old.ticket_id, "item-other") is None
+
+
 def test_prune_tolerates_aware_restored_timestamps() -> None:
     from datetime import timezone
 

@@ -505,6 +505,38 @@ def test_supersede_plan_closes_old_plan_by_prefix() -> None:
     assert manager.supersede_plan(old.ticket_id, "item-other") is None
 
 
+def test_cancel_plan_terminates_plan_permanently() -> None:
+    """硬性停止后计划必须真的结束：取消后 resume sweep 不再选中它。"""
+    from app.services.agent.reply_ticket import plan_has_open_steps
+
+    manager = ReplyTicketManager()
+    agent = SimpleNamespace(
+        _context=SimpleNamespace(
+            robot_id="",
+            robot_context_token="",
+            reply_ticket_id="",
+        )
+    )
+    ticket = manager.create_for_agent(
+        agent,
+        item_id="item-1",
+        handler_id="handler-1",
+        message="task",
+        source_type="web",
+    )
+    manager.update_ticket_plan(ticket.ticket_id, [{"step": "s", "status": "in_progress"}])
+    assert plan_has_open_steps(ticket.plan)
+
+    finalized = manager.cancel_plan(ticket.ticket_id)
+    assert finalized is not None
+    assert finalized[0]["status"] == "cancelled"
+    assert ticket.plan == []
+    assert not plan_has_open_steps(ticket.plan)
+    # 幂等 + 不存在票据
+    assert manager.cancel_plan(ticket.ticket_id) is None
+    assert manager.cancel_plan("missing") is None
+
+
 def test_prune_tolerates_aware_restored_timestamps() -> None:
     from datetime import timezone
 

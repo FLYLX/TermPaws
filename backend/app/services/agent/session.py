@@ -1319,6 +1319,9 @@ class AgentSession:
                 # Timeout/turn-guard cancels fail the ticket quietly: the task
                 # state survives for later turns, no scary message to the user.
                 return False
+            # 对用户可见的终止汇报意味着任务真的结束了：计划一并取消，
+            # 防止 resume sweep 复活已宣告失败的任务。
+            reply_ticket_manager.cancel_plan(ticket_id, explanation="stopped")
             delivered = reply_ticket_manager.deliver(ticket_id, report)
             if delivered and ticket.source_type == "qq":
                 self.emit_output(

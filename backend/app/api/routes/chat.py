@@ -937,6 +937,11 @@ def _finalize_stopped_turn(
     ticket = reply_ticket_manager.get(ticket_id)
     if ticket:
         reply_ticket_manager.mark_failed(ticket_id, reason or final_report)
+        # 硬性停止（循环/预算耗尽/失败）是终态：计划一并取消，否则它保持
+        # 未完成，resume sweep 会反复复活这个注定再失败的任务，用户就会
+        # 看到"任务已结束"的消息一遍遍重发。
+        if not is_abort:
+            reply_ticket_manager.cancel_plan(ticket_id, explanation="stopped")
     delivered = False
     if ticket and ticket.source_type == SOURCE_QQ:
         delivered = reply_ticket_manager.deliver(ticket_id, final_report)

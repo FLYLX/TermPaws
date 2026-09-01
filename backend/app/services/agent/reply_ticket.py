@@ -555,7 +555,17 @@ class ReplyTicketManager:
             _persist_ticket(ticket)
             return ticket
 
-    def supersede_plan(self, ticket_ref: str, item_id: str) -> list[dict] | None:
+    def cancel_plan(self, ticket_id: str, *, explanation: str = "stopped") -> list[dict] | None:
+        """终止票据上的计划：步骤标记取消、清除、持久化、广播。
+
+        轮次被硬性停止（循环/预算耗尽）时使用——消息告诉用户"任务已结束"
+        就必须真的结束，否则计划保持未完成，resume sweep 会反复复活它。
+        """
+        return self.supersede_plan(ticket_id, "", explanation=explanation)
+
+    def supersede_plan(
+        self, ticket_ref: str, item_id: str, *, explanation: str = "superseded"
+    ) -> list[dict] | None:
         """关闭同一任务旧票据上的计划（agent 接管任务时调用）。
 
         支持完整 id 或唯一前缀（提示词里只暴露前 8 位）。步骤标记
@@ -567,7 +577,7 @@ class ReplyTicketManager:
             return None
         with self._lock:
             ticket = self._tickets.get(self._resolve_ticket_id_locked(ref))
-            if ticket is None:
+            if ticket is None and item_id:
                 matches = [
                     t
                     for t in self._tickets.values()
@@ -601,7 +611,7 @@ class ReplyTicketManager:
                     "type": "plan_updated",
                     "item_id": ticket.item_id,
                     "plan": finalized,
-                    "explanation": "superseded",
+                    "explanation": explanation,
                 },
             )
         except Exception:

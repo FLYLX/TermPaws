@@ -656,7 +656,7 @@ class LocalMCPServer:
         )
         self.register_tool(
             name="save_memory",
-            description="保存稳定、可复用、已验证的重要信息到长期记忆中。执行中的任务状态只放任务队列。不要保存原生日志、命令回显、等待态消息或敏感信息。",
+            description="保存稳定、可复用、已验证的重要信息到长期记忆中。用户随口提到的个人信息（家庭、喜好、计划、所有物、常去地点、正在做的事）也值得保存，不必等用户说『记住』。执行中的任务状态只放任务队列。不要保存原生日志、命令回显、等待态消息或敏感信息。",
             input_schema={
                 "type": "object",
                 "properties": {

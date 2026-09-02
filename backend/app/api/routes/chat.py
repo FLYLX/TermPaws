@@ -199,6 +199,12 @@ def extract_important_info(
     if explicit_candidate is not None:
         return explicit_candidate
 
+    from app.services.agent.prompts.policy import build_casual_fact_memory_candidate
+
+    casual_candidate = build_casual_fact_memory_candidate(user_msg)
+    if casual_candidate is not None:
+        return casual_candidate
+
     if not handler_id:
         return None
 

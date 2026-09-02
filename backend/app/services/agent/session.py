@@ -2734,6 +2734,9 @@ class AgentSession:
                 messages = next_messages
 
             if is_plain_chat and turn_completed:
+                self._auto_persist_conversation_memory(
+                    str(input_msg.content or ""), turn_final_content, agent
+                )
                 # Fan out the final text to every reply route merged into this
                 # turn. The primary ticket is covered by the paths below; each
                 # secondary ticket gets the same combined answer through its
@@ -3089,6 +3092,49 @@ class AgentSession:
                             break
         except Exception:
             pass
+
+    def _auto_persist_conversation_memory(
+        self, user_message: str, assistant_message: str, agent: Agent
+    ) -> None:
+        """显式记忆指令（"记住..."）的自动落盘。
+
+        此前只有旧的同步路由做这一步；stream/QQ 全指望 agent 自己调
+        save_memory——它没调就丢了（实测"记住路由器密码"就没存上）。
+        persist_memory_candidate 按内容哈希去重，agent 已手动存的不会重复。
+        """
+        try:
+            if not user_message.strip() or not assistant_message.strip():
+                return
+            from app.services.agent.memory.vector_store import vector_store
+            from app.services.agent.prompts import persist_memory_candidate
+
+            # 定义在 chat 路由模块里；函数内延迟导入避免模块级循环依赖。
+            from app.api.routes.chat import extract_important_info
+
+            handler_id = str(getattr(agent, "handler_id", "") or "").strip()
+            if not handler_id:
+                from app.services.agent.memory.scope import resolve_handler_id
+
+                handler_id = resolve_handler_id(self.item_id)
+            candidate = extract_important_info(
+                user_message,
+                assistant_message,
+                item_id=self.item_id,
+                handler_id=handler_id,
+                matched_skills=None,
+            )
+            if candidate:
+                persist_memory_candidate(
+                    handler_id,
+                    candidate,
+                    store=vector_store,
+                    source_item_id=self.item_id,
+                )
+        except Exception:
+            logger.debug(
+                "[AgentSession] auto-persist conversation memory failed: item=%s",
+                self.item_id,
+            )
 
     def inject_open_plans_prompt_context(
         self, messages: list[dict], exclude_ticket_id: str = ""

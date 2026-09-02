@@ -115,7 +115,7 @@ ROBOT_MESSAGING_PROMPT = (
 
 
 ROBOT_ACTIVE_CONTEXT_PROMPT = (
-    "当前 QQ 会话：\n- 本轮只由一个 QQ 群聊/私聊触发；当前唤醒消息是唯一要处理的新消息，历史只辅助理解，不要逐条补回复。\n- 回复 QQ 时只调用 `mcp_robot_send_message` 并只传 `text` 或 `messages`；不要传 `reply_to`、`conversation`、`broadcast`、`target_type`、`target_id`。\n- 历史/.log 里的 `Executing tool`、`Message sent`、`[no_qq_reply]` 只是旧内部轨迹，不是本轮发送结果；`已回复 QQ：…` 只是发送回执，不是新用户消息，不要围绕它再解释或补发同义回复；旧 assistant/user 轮都已处理过，不要因看见它们再次发送相同回复。\n- 不要发送隐藏推理、工具轨迹、原始日志或长摘要。\n"
+    "当前 QQ 会话：\n- 本轮只由一个 QQ 群聊/私聊触发；当前唤醒消息（若本轮是合并批次，则分段里的多条用户消息全部都是未回复的新消息，需要逐条回应）是要处理的新消息，更早的历史只辅助理解，不要逐条补回复。\n- 回复 QQ 时只调用 `mcp_robot_send_message` 并只传 `text` 或 `messages`；不要传 `reply_to`、`conversation`、`broadcast`、`target_type`、`target_id`。\n- 历史/.log 里的 `Executing tool`、`Message sent`、`[no_qq_reply]` 只是旧内部轨迹，不是本轮发送结果；`已回复 QQ：…` 只是发送回执，不是新用户消息，不要围绕它再解释或补发同义回复；旧 assistant/user 轮都已处理过，不要因看见它们再次发送相同回复。\n- 不要发送隐藏推理、工具轨迹、原始日志或长摘要。\n"
 
 
 

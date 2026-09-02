@@ -2122,6 +2122,25 @@ class AgentSession:
             if msg.reply_ticket_id and msg.reply_ticket_id not in merged_ticket_ids:
                 merged_ticket_ids.append(msg.reply_ticket_id)
 
+        # 合并批次里有 ≥2 条真实用户消息时，它们全是未回复的新消息，
+        # 但 QQ 会话提示词默认"只有一条唤醒消息"——模型会只回最后一条，
+        # 前面 @它的提问被静默跳过（"有些回复没回复"的根因）。在合并内容
+        # 头部显式声明，让模型逐条回应。
+        user_chat_count = sum(
+            1
+            for msg in batch
+            if msg.input_type == InputType.CHAT
+            and not str(msg.source_label or "").startswith("plan-resume")
+        )
+        if user_chat_count >= 2:
+            sections.insert(
+                0,
+                "[系统提示]\n"
+                f"本轮合并了 {user_chat_count} 条尚未回复的用户消息（见下方各分段）。"
+                "它们都是需要回应的新消息，不是已处理的历史——请逐条给出回应"
+                "（可以在一条回复里逐点覆盖所有提问），不要只回最后一条。",
+            )
+
         combined_content = "\n---\n".join(sections) if sections else ""
 
         # Pick primary reply_ticket: the most recent input carrying one.

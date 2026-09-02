@@ -2045,25 +2045,6 @@ class LocalMCPServer:
         if not command or not item_id:
             return [{"type": "text", "text": "Error: command and item_id required"}]
 
-        # 明显长于前台超时的命令（sleep N > timeout_seconds）必然被超时打断
-        # 且拿不到任何结果——直接拒绝并指路后台工具，别让模型在这个错误
-        # 选择上反复空转。
-        import re as _re
-
-        sleep_match = _re.search(r"\bsleep\s+(\d+(?:\.\d+)?)", command)
-        timeout_hint = self._coerce_job_int(args.get("timeout_seconds"), 20, 1, 600)
-        if sleep_match and float(sleep_match.group(1)) > timeout_hint:
-            return [
-                {
-                    "type": "text",
-                    "text": (
-                        f"拒绝执行：sleep {sleep_match.group(1)} 明显长于前台超时 "
-                        f"timeout_seconds={timeout_hint}，该命令必然被超时打断且没有任何结果。"
-                        "长时间等待/长任务请改用 mcp_local_run_job 后台执行（它会自动送回结果）。"
-                    ),
-                }
-            ]
-
         try:
             has_handler = self._ensure_terminal_input_handler(str(item_id))
             debug_log(f"[LocalMCPServer] has_handler={has_handler}")

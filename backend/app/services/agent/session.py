@@ -1472,10 +1472,21 @@ class AgentSession:
 
         timer.start()
 
+    @staticmethod
+    def _background_job_redirect_hint() -> str:
+        return (
+            "规则：凡不需要后续交互输入、能无人值守跑完的命令"
+            "（sleep、下载、安装、编译、批处理查询等）一律改用 "
+            "mcp_local_run_job 后台执行——结果会自动回调，不占主终端也不会被超时打断；"
+            "前台 execute_command 只用于需要持续交互的进程或几秒内出结果的短命令。"
+            "如果这条命令属于前者，请现在改用 mcp_local_run_job 重试。"
+        )
+
     def _build_missing_command_feedback(self, pending: PendingCommand) -> str:
         return (
             f"命令 `{pending.command}` 已发送，但在 "
             f"{pending.timeout_seconds} 秒内没有读取到新的原生日志反馈。"
+            + self._background_job_redirect_hint()
         )
 
 
@@ -1515,6 +1526,8 @@ class AgentSession:
             interrupt_text = "未中断当前进程，请结合上一条命令和最新终端输出排查。"
         return (
             f"命令 `{pending.command}` 在 {pending.timeout_seconds} 秒内未完成。"
+            f"{interrupt_text}"
+            + self._background_job_redirect_hint()
         )
 
     def _run_pending_command_recheck(self, expected_command: str):

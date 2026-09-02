@@ -115,6 +115,12 @@ MEMORY_TYPE_RANK_BONUS = {
     "context": 0.08,
     "fact": 0.04,
 }
+# 记忆注入 prompt 的硬上限：单条截断 + 整块总量预算，防止脏数据/超大
+# 条目把 prompt 撑爆（实测一条 1.5MB 的垃圾记忆让每轮 prompt 多花数十万
+# token、思考慢几分钟）。
+MEMORY_PROMPT_PER_ENTRY_MAX_CHARS = 400
+MEMORY_PROMPT_TOTAL_MAX_CHARS = 6000
+
 ALWAYS_ON_MEMORY_SOURCES = {
     "chat_user",
     "local_agent_saved",
@@ -545,6 +551,16 @@ def _collect_long_term_memories(
             seen_ids.add(memory_id)
             collected.append(memory)
 
+    # Per-memory content budget applies UNCONDITIONALLY: a single oversized
+    # or corrupted memory entry (e.g. megabytes of junk written by a buggy
+    # test/agent) must never reach the prompt, no matter how few memories
+    # were collected. Previously this only ran when collected > n_results,
+    # which let a 1.5MB entry through whenever the store was small.
+    for memory in collected:
+        content = str(memory.get("content") or "")
+        if len(content) > MEMORY_PROMPT_PER_ENTRY_MAX_CHARS:
+            memory["content"] = content[: MEMORY_PROMPT_PER_ENTRY_MAX_CHARS - 3] + "..."
+
     if n_results and len(collected) > n_results:
         type_rank = {"preference": 0, "error": 1, "context": 2, "fact": 3}
         collected = sorted(
@@ -555,12 +571,21 @@ def _collect_long_term_memories(
                 -_memory_relevance_score(m),
             ),
         )[:n_results]
-        # Enforce a per-memory content budget so the impression card can
-        # never dominate the prompt again.
+
+    # Total budget for the whole memory block: keep the highest-priority
+    # entries that fit; prompt size stays bounded regardless of store size.
+    if len(collected) > 1:
+        budgeted: list[dict[str, Any]] = []
+        spent = 0
         for memory in collected:
-            content = str(memory.get("content") or "")
-            if len(content) > 240:
-                memory["content"] = content[:237] + "..."
+            entry_len = len(str(memory.get("content") or "")) + 40
+            if budgeted and spent + entry_len > MEMORY_PROMPT_TOTAL_MAX_CHARS:
+                continue
+            budgeted.append(memory)
+            spent += entry_len
+            if spent >= MEMORY_PROMPT_TOTAL_MAX_CHARS:
+                break
+        collected = budgeted or collected[:1]
 
     trimmed = _select_long_term_memories(
         collected,

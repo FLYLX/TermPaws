@@ -2658,6 +2658,8 @@ class AgentSession:
             self._current_turn_id = turn_guard.turn_id
             self.emit_status("running", "回复中")
 
+            self._log_prompt_budget(messages, tools, context="chat")
+
             turn_final_content = ""
             turn_completed = False
             plan_continuation_count = 0
@@ -3017,6 +3019,76 @@ class AgentSession:
             messages, exclude_ticket_id=input_msg.reply_ticket_id
         )
         return messages
+
+    def _log_prompt_budget(
+        self, messages: list[dict], tools: list, *, context: str
+    ) -> None:
+        """每轮 prompt 体积体检：总量 + 最大的三条消息 + 工具 schema 大小。
+
+        轮次慢的主因是 prompt 体积（远端均值 ~60k tok/轮），没有分项数据
+        就无从压缩。每轮一行日志，长期数据可直接定位肥段。
+        """
+        try:
+            import json as _json
+
+            def _size(msg: dict) -> int:
+                content = msg.get("content")
+                if isinstance(content, list):
+                    return sum(
+                        len(str(part.get("text", "")))
+                        for part in content
+                        if isinstance(part, dict)
+                    )
+                return len(str(content or ""))
+
+            sizes = sorted(
+                ((_size(m), str(m.get("role")), str(m.get("content"))[:60].replace("\n", " ")) for m in messages),
+                reverse=True,
+            )
+            total = sum(size for size, _role, _preview in sizes)
+            tools_chars = len(_json.dumps(tools, ensure_ascii=False))
+            top = [
+                f"{role}:{size}c" for size, role, _preview in sizes[:3]
+            ]
+            logger.info(
+                "[AgentSession] prompt budget: context=%s messages=%s total=%sc top=%s tools=%s/%sc",
+                context,
+                len(messages),
+                total,
+                top,
+                len(tools),
+                tools_chars,
+            )
+            # 超大消息解剖：逐段打印前缀定位肥段（临时诊断）
+            for size, role, _preview in sizes[:1]:
+                if size > 50000:
+                    fat = next(
+                        m for m in messages if _size(m) == size
+                    )
+                    content = fat.get("content")
+                    if isinstance(content, list):
+                        content = "\n".join(
+                            str(p.get("text", "")) for p in content if isinstance(p, dict)
+                        )
+                    content = str(content or "")
+                    pos = 0
+                    for _i in range(25):
+                        nxt = content.find("\n\n", pos)
+                        if nxt < 0:
+                            nxt = min(pos + 2000, len(content))
+                        block = content[pos:nxt]
+                        if len(block) > 200:
+                            logger.info(
+                                "[AgentSession] fat-block@%s len=%s | %r",
+                                pos,
+                                len(block),
+                                block[:100],
+                            )
+                        pos = nxt + 2
+                        if pos >= len(content):
+                            break
+        except Exception:
+            pass
 
     def inject_open_plans_prompt_context(
         self, messages: list[dict], exclude_ticket_id: str = ""

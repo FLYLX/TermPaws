@@ -1037,6 +1037,18 @@ class VectorStoreService:
         if memory_id is None:
             memory_id = str(uuid.uuid4())
 
+        # 写入侧硬上限：记忆是"要点"不是文档。超大内容（测试垃圾、误存的
+        # 日志/大文本）截断落盘，防止日后每轮 prompt 被单条记忆撑爆。
+        MEMORY_WRITE_MAX_CHARS = 4000
+        if len(content) > MEMORY_WRITE_MAX_CHARS:
+            logger.warning(
+                "[VectorStore] Truncating oversized memory content (%s chars -> %s) for handler %s",
+                len(content),
+                MEMORY_WRITE_MAX_CHARS,
+                handler_id,
+            )
+            content = content[: MEMORY_WRITE_MAX_CHARS - 20] + "…[truncated]"
+
         if not allow_duplicate:
             existing = self._check_duplicate(handler_id, content)
             if existing:

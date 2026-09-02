@@ -31,7 +31,9 @@ def resolve_prompt_memory_policy(turn_type: PromptTurnType) -> PromptMemoryPolic
     if turn_type == PromptTurnType.CHAT:
         return PromptMemoryPolicy(
             include_session_summary=False,
-            include_recent_history=False,
+            # 闲聊需要"最近几条"上下文：此前为 False，且 stream 路由丢弃了
+            # 前端传来的 history，等于闲聊零上下文、答不上任何追问。
+            include_recent_history=True,
             include_long_term=True,
             max_recent_messages=6,
             max_long_term_memories=3,

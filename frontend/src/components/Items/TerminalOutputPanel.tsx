@@ -22,7 +22,7 @@ export function TerminalOutputPanel({
   const [command, setCommand] = useState("")
   const outputRef = useRef<HTMLDivElement | null>(null)
   const stickToBottomRef = useRef(true)
-  const { isConnected, isConnecting, error, output, sendCommand, reconnect } =
+  const { isConnected, isConnecting, error, output, sendCommand, sendCtrlC, reconnect } =
     useTerminalConnection({ itemId, enabled: running })
 
   useEffect(() => {
@@ -117,6 +117,15 @@ export function TerminalOutputPanel({
           disabled={!isConnected}
           className="code-editor h-8 flex-1 rounded border border-zinc-700 bg-zinc-900/80 px-3 font-mono text-xs text-slate-100 outline-none placeholder:text-slate-500 disabled:opacity-50"
         />
+        <button
+          type="button"
+          onClick={() => sendCtrlC()}
+          disabled={!isConnected}
+          className="flex h-8 items-center justify-center rounded border border-red-900/60 px-2 font-mono text-[10px] font-bold text-red-400 hover:bg-red-950/50 disabled:opacity-40"
+          title="发送 Ctrl+C（中断终端当前进程）"
+        >
+          ^C
+        </button>
         <button
           type="button"
           onClick={handleSend}

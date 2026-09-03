@@ -68,7 +68,7 @@ const TERMINAL_DEBUG = import.meta.env.DEV
 const TERMINAL_OUTPUT_MAX_ENTRIES = 1200
 const TERMINAL_OUTPUT_MAX_CHARS = 240_000
 const TERMINAL_PENDING_OUTPUT_MAX_ENTRIES = 4000
-const TERMINAL_STREAM_FLUSH_MS = 80
+const TERMINAL_STREAM_FLUSH_MS = 160
 
 function stripTerminalControlChars(text: string): string {
   let result = ""

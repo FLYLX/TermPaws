@@ -1,9 +1,12 @@
 import { Loader2, Send } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
+
 import {
   type TerminalOutput,
   useTerminalConnection,
 } from "@/hooks/useTerminalConnection"
+
+const TERMINAL_RENDER_WINDOW = 300
 
 function getEntryText(entry: TerminalOutput): string {
   if (typeof entry.stdout === "string") return entry.stdout
@@ -38,6 +41,13 @@ export function TerminalOutputPanel({
     sendCommand(trimmed)
     setCommand("")
   }
+
+  // 渲染窗口化：状态缓冲 1200 条，但 DOM 只挂尾部 300 条。
+  // 否则高输出终端（MC 日志）每次 flush 都要对 ~1200 个 span 做 diff，
+  // 持续烧 CPU，页面挂久了就卡。
+  const visibleOffset = Math.max(0, output.length - TERMINAL_RENDER_WINDOW)
+  const visibleOutput =
+    visibleOffset > 0 ? output.slice(visibleOffset) : output
 
   if (!running) {
     return (
@@ -79,14 +89,14 @@ export function TerminalOutputPanel({
         ) : output.length === 0 ? (
           <div className="text-lime-400">终端已连接，等待输出...</div>
         ) : (
-          output.map((entry, index) => {
+          visibleOutput.map((entry, index) => {
             const text = getEntryText(entry)
             if (!text) return null
             const isError = Boolean(entry.stderr)
             const isInput = Boolean(entry.stdin)
             return (
               <span
-                key={`term-${index}`}
+                key={`term-${visibleOffset + index}`}
                 className={`whitespace-pre-wrap break-all ${
                   isError
                     ? "text-red-300"

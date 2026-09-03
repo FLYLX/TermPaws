@@ -261,13 +261,6 @@ def _extract_explicit_memory_payload(user_message: str) -> str:
         if not match:
             continue
         payload = match.group(1).strip(" \t\r\n:：,，;；。")
-        # 剥掉指令尾巴（"记住后回复我/告诉我"等），它们是说话方式不是要记的内容。
-        payload = re.sub(
-            r"(?:[。，,；;]?\s*(?:记住|记好|记下|记下来|记一下)(?:了|好|后|以后)?(?:再|然后|并)?(?:告诉|回复|通知|跟……说|跟)(?:我|大家)?[。！!~]*)+$",
-            "",
-            payload,
-            flags=re.IGNORECASE,
-        ).strip(" \t\r\n:：,，;；。")
         if payload:
             return payload
 
@@ -610,57 +603,6 @@ def build_manual_status_update(
         "content_hash": _build_content_hash(updated_content),
     }
     return updated_content, updated_metadata
-
-
-CASUAL_FACT_START_CUES = (
-    "我家",
-    "我的",
-    "我想",
-    "我喜欢",
-    "我打算",
-    "我在",
-    "我是",
-    "我有",
-    "我买",
-    "我养",
-    "我住",
-    "我公司",
-)
-_CASUAL_QUESTION_TAILS = ("吗", "嘛", "呢", "吧", "？", "?")
-
-
-def build_casual_fact_memory_candidate(user_message: str) -> MemoryCandidate | None:
-    """不经意说出的第一人称事实也值得记住（"我家楼下新开了家拉面"）。
-
-    只收第一人称陈述句：疑问/反问/日志噪音/敏感内容一律不收（复用既有
-    拒绝规则）。这类记忆由 30 分钟一轮的 dedup sweep 合并清理，
-    prompt 侧另有 3 条/6K 封顶，不会撑爆上下文。
-    """
-    text = _normalize_text(user_message)
-    if len(text) < 8:
-        return None
-    if not text.startswith(CASUAL_FACT_START_CUES):
-        return None
-    if "?" in text or "\uff1f" in text or text.endswith(_CASUAL_QUESTION_TAILS):
-        return None
-    content = _build_memory_content(text, "fact")
-    if should_reject_long_term_memory(content):
-        return None
-    metadata: dict[str, Any] = {
-        "type": "conversation_casual",
-        "source": "chat_user",
-        "verified": False,
-        "content_hash": _build_content_hash(content),
-    }
-    memory_key = infer_memory_key(content, "fact")
-    if memory_key:
-        metadata["memory_key"] = memory_key
-    return MemoryCandidate(
-        content=content,
-        memory_type="fact",
-        ttl_days=resolve_memory_ttl_days("fact"),
-        metadata=metadata,
-    )
 
 
 def build_conversation_memory_candidate(

@@ -2795,7 +2795,9 @@ class LocalMCPServer:
             if not results:
                 return [{"type": "text", "text": "未找到相关记忆"}]
 
-            lines = ["相关长期记忆："]
+            from app.services.agent.prompts.builder import LONG_TERM_MEMORY_FRAMING
+
+            lines = [f"相关长期记忆{LONG_TERM_MEMORY_FRAMING}："]
             for memory in results:
                 metadata = memory.get("metadata") or {}
                 sender = str(
@@ -2808,6 +2810,8 @@ class LocalMCPServer:
                 if not content:
                     continue
                 prefix = f"{sender}: " if sender and not content.startswith(sender) else ""
+                if len(content) > 400:
+                    content = content[:397] + "..."
                 lines.append(f"- {prefix}{content}")
 
             return [{"type": "text", "text": "\n".join(lines)}]

@@ -429,6 +429,15 @@ class RobotService:
         )
         return pending_id
 
+    def _pop_pending_task_replies(
+        self,
+        robot_id: uuid.UUID | str,
+        conversation_key: str,
+    ) -> list[PendingRobotTaskReply]:
+        key = self._pending_chat_key(robot_id, conversation_key)
+        with self._lock:
+            return list(self._pending_task_replies.pop(key, None) or [])
+
     def clear_background_job_reply(
         self,
         *,
@@ -764,6 +773,25 @@ class RobotService:
                     robot = session.get(Robot, uuid.UUID(robot_id))
                 if robot is None or not robot.is_enabled:
                     continue
+                # 停放的后台 job 结果标记：此前 sweep 只排聊天输入那个 store，
+                # 这些标记永远没人处理（远端实测两个群积压 9 条几天不清）。
+                # 转成一条"请查证后汇报"的追问输入，走正常 followup 一次救出。
+                for reply in self._pop_pending_task_replies(robot_id, conversation_key):
+                    self._record_pending_chat_input(
+                        robot=robot,
+                        conversation_key=conversation_key,
+                        item_id=reply.item_id,
+                        route_key=reply.route_key,
+                        message_text=(
+                            f"[系统] 后台任务（{reply.command}）的结果此前未能送达。"
+                            "请用 mcp_local_list_jobs 查询其最新状态和输出并如实汇报；"
+                            "若任务已完成或已查无此任务，简要说明即可。"
+                        ),
+                        sender_key=reply.sender_key,
+                        sender_label=reply.sender_label,
+                        trigger_reason=reply.trigger_reason or "background_job",
+                        reply_target=reply.reply_target,
+                    )
                 if self._enqueue_pending_chat_followup(
                     robot=robot, conversation_key=conversation_key
                 ):
@@ -922,70 +950,10 @@ class RobotService:
                 return
 
             try:
-                dispatch_requires_awake = (
-                    job.reply_requires_awake and not job.direct_reply_trigger
-                )
-                if not self.conversation_controller_allows_reply(
-                    job.robot_id,
-                    job.conversation_key,
-                    job.conversation_generation,
-                    requires_awake=dispatch_requires_awake,
-                ):
-                    requeue_entries = list(job.pending_entries)
-                    if (
-                        not requeue_entries
-                        and job.inbound_message is not None
-                        and job.message_text.strip()
-                    ):
-                        # Direct dispatch skipped by the generation guard: keep
-                        # the message as a pending input so it is answered by
-                        # the followup batch instead of being dropped.
-                        requeue_entries = [
-                            PendingRobotChatInput(
-                                item_id=job.item_id,
-                                route_key=job.route_key,
-                                message_text=job.message_text,
-                                sender_key=job.sender_key,
-                                sender_label=self._sender_label_from_reply_target(
-                                    job.reply_target,
-                                    job.sender_key,
-                                ),
-                                trigger_reason=job.trigger_reason
-                                or "active_chat_window",
-                                reply_target=job.reply_target.model_copy(deep=True),
-                                enqueued_at=job.enqueued_at,
-                            )
-                        ]
-                    if requeue_entries:
-                        self._prepend_pending_chat_inputs(
-                            job.robot_id,
-                            job.conversation_key,
-                            requeue_entries,
-                        )
-                    record_robot_event(
-                        str(job.robot_id),
-                        direction="backend_worker",
-                        event="dispatch_skipped_sleeping_conversation",
-                        status="ignored",
-                        payload={
-                            "item_id": str(job.item_id),
-                            "route_key": job.route_key,
-                            "conversation": job.conversation_key,
-                            "generation": job.conversation_generation,
-                            "requeued_pending": len(requeue_entries),
-                        },
-                    )
-                    self._clear_reply_context_window_for_key(
-                        job.robot_id,
-                        job.conversation_key,
-                        reason="dispatch_skipped_stale_generation",
-                        expected_generation=job.conversation_generation or None,
-                    )
-                    self._enqueue_pending_chat_followup(
-                        robot=robot,
-                        conversation_key=job.conversation_key,
-                    )
-                    return
+                # 进队即处理：能进队列的消息在入站时已经过了"值不值得回"的
+                # 判断，派发/回复路径上不再加"是否还醒着/generation 是否一致"
+                # 的硬闸——那套闸在忙群里会让每条消息都因新消息不断 bump
+                # generation 而永远无法通过，是排队卡死的根因。
                 chat_message = self._prepare_queued_chat_message(
                     robot=robot,
                     item=item,
@@ -1259,27 +1227,6 @@ class RobotService:
                 },
             )
             return False
-        if not self.conversation_controller_allows_completion_reply(
-            job.robot_id,
-            job.conversation_key,
-            job.conversation_generation,
-            requires_awake=job.reply_requires_awake,
-        ):
-            record_robot_event(
-                str(job.robot_id),
-                direction="backend_to_bridge",
-                event="dispatch_visible_response_dropped_sleeping_conversation",
-                status="ignored",
-                message=preview_text(response_text),
-                payload={
-                    "item_id": str(job.item_id),
-                    "route_key": job.route_key,
-                    "conversation": job.conversation_key,
-                    "generation": job.conversation_generation,
-                },
-            )
-            return False
-
         try:
             from .bridge_client import robot_bridge_client
 
@@ -1413,16 +1360,9 @@ class RobotService:
         job: QueuedRobotChatJob,
         message: str,
     ) -> None:
-        # Check the send permission BEFORE clearing the reply context:
-        # clearing bumps the controller generation, which would make the
-        # generation check below always fail, so the error would never
-        # reach QQ.
-        allowed = self.conversation_controller_allows_completion_reply(
-            job.robot_id,
-            job.conversation_key,
-            job.conversation_generation,
-            requires_awake=job.reply_requires_awake,
-        )
+        # 错误汇报与正常回复同一条原则：既然轮次已经跑了，结果必须送达，
+        # 不再过 generation/醒睡闸。
+        allowed = True
         record_robot_event(
             str(job.robot_id),
             direction="backend_worker",

@@ -7,9 +7,15 @@ import uuid
 from app import crud
 
 # Create engine with SQLite-specific configuration
+_is_sqlite = "sqlite" in str(settings.SQLALCHEMY_DATABASE_URI)
 engine = create_engine(
     str(settings.SQLALCHEMY_DATABASE_URI),
-    connect_args={"check_same_thread": False} if "sqlite" in str(settings.SQLALCHEMY_DATABASE_URI) else {},
+    connect_args={"check_same_thread": False} if _is_sqlite else {},
+    # SSE 长连接 + 并发聊天 + watchdog 下，默认 5+10 连接池会在突发流量时
+    # 耗尽（"QueuePool limit reached" → 请求 500 → 消息无声丢失）。
+    pool_size=30,
+    max_overflow=60,
+    pool_timeout=60,
 )
 
 # Register UUID type for SQLite
@@ -21,6 +27,8 @@ if sqlalchemy.__version__ >= "2.0":
     def _connect_sqlite_pragma(dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=15000")
         cursor.close()
 
 

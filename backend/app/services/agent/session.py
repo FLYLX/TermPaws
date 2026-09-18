@@ -526,7 +526,11 @@ def build_terminal_source_delivery_correction_message(final_response: str) -> di
 
 
 def _fake_llm_response():
-    """TERMPAWS_FAKE_LLM=1 时的固定应答：无工具调用、无思考、即时返回。"""
+    """TERMPAWS_FAKE_LLM=1 时的固定应答：无工具调用、无思考。
+    TERMPAWS_FAKE_LLM_DELAY_MS 可让假轮次变慢，用于压"边处理边合并"。"""
+    delay_ms = int(os.environ.get("TERMPAWS_FAKE_LLM_DELAY_MS") or 0)
+    if delay_ms > 0:
+        time.sleep(delay_ms / 1000)
     return SimpleNamespace(
         choices=[
             SimpleNamespace(

@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 import hashlib
 import json
@@ -522,6 +523,22 @@ def build_terminal_source_delivery_correction_message(final_response: str) -> di
             f"刚才准备回复的内容:\n{final_response.strip()}"
         ),
     }
+
+
+def _fake_llm_response():
+    """TERMPAWS_FAKE_LLM=1 时的固定应答：无工具调用、无思考、即时返回。"""
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content="[fake-llm] ok",
+                    tool_calls=None,
+                    reasoning_content=None,
+                )
+            )
+        ],
+        usage=None,
+    )
 
 
 class SessionState(Enum):
@@ -3233,6 +3250,12 @@ class AgentSession:
         *,
         tools: list[dict] | None = None,
     ):
+        # 通道压测用的假模型：零延迟返回固定文本，不走网络。只在显式设置
+        # TERMPAWS_FAKE_LLM=1 时生效（生产永远不设置）。测的是
+        # 队列/合并/轮次通道，不是模型质量。
+        if os.environ.get("TERMPAWS_FAKE_LLM") == "1":
+            return _fake_llm_response()
+
         effective_tools = agent.get_tools_for_litellm() if tools is None else tools
         kwargs = build_litellm_completion_kwargs(
             model=agent._context.model,

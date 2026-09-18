@@ -21,6 +21,7 @@ from app.core.tool_markup import extract_dsml_tool_calls
 from app.models import Item, ItemHandler
 from app.services.agent.agent import agent_manager
 from app.services.agent.chat_runtime import (
+    _get_item_handler_cached,
     get_item_handler_llm_config,
     prepare_chat_agent,
 )
@@ -1921,7 +1922,7 @@ def _require_chat_handler(
     item_id: str,
     current_user: CurrentUser,
 ) -> tuple[ItemHandler, Item]:
-    prepared = get_item_handler_llm_config(session, item_id, current_user)
+    prepared = _get_item_handler_cached(session, item_id, current_user)
     if not prepared:
         raise HTTPException(
             status_code=404,

@@ -296,6 +296,10 @@ def update_item_handler(
     if update_dict:
         agent_manager.refresh_cached(item_handler)
 
+    from app.services.agent.chat_runtime import invalidate_handler_cache
+
+    invalidate_handler_cache()
+
     return _build_item_handler_public(item_handler)
 
 
@@ -314,6 +318,10 @@ def delete_item_handler(
 
     session.delete(item_handler)
     session.commit()
+
+    from app.services.agent.chat_runtime import invalidate_handler_cache
+
+    invalidate_handler_cache()
 
     return Message(message="Item handler deleted successfully")
 

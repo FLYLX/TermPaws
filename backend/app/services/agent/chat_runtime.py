@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -59,6 +61,47 @@ def _is_integration_internal_response(value: str) -> bool:
 
 def _sanitize_integration_response(value: str) -> str:
     return sanitize_integration_visible_text(str(value or ""))
+
+
+# item → (handler, item) 解析缓存：每条聊天消息 3 次 SELECT 在突发流量下
+# 会直接打满连接池。60s TTL 兜住 handler/归属变更的过期窗口；权限判断
+# 用的是缓存里的 owner_id，语义与实时查询一致。
+_HANDLER_CACHE_TTL_SECONDS = 60.0
+_handler_cache_lock = threading.Lock()
+_handler_cache: dict[str, tuple[float, ItemHandler, Item]] = {}
+
+
+def invalidate_handler_cache(item_id: str | None = None) -> None:
+    with _handler_cache_lock:
+        if item_id:
+            _handler_cache.pop(str(item_id), None)
+        else:
+            _handler_cache.clear()
+
+
+def _get_item_handler_cached(
+    session: Session,
+    item_id: str,
+    user: User,
+) -> tuple[ItemHandler, Item] | None:
+    key = str(item_id)
+    now = time.monotonic()
+    with _handler_cache_lock:
+        cached = _handler_cache.get(key)
+    if cached is not None and now - cached[0] < _HANDLER_CACHE_TTL_SECONDS:
+        _t, handler, item = cached
+    else:
+        resolved = get_item_handler_llm_config(session, item_id, user)
+        if resolved is None:
+            return None
+        _t_handler, _t_item = resolved
+        with _handler_cache_lock:
+            _handler_cache[key] = (now, _t_handler, _t_item)
+        handler, item = _t_handler, _t_item
+    # 权限判断必须每请求执行（用缓存里的归属数据，语义不变）
+    if not user.is_superuser and item.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    return handler, item
 
 
 def get_item_handler_llm_config(

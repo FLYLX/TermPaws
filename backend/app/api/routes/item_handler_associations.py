@@ -68,7 +68,11 @@ def add_item_to_handler(
     association = ItemHandlerItem(item_handler_id=item_handler_id, item_id=item_id)
     session.add(association)
     session.commit()
-    
+
+    from app.services.agent.chat_runtime import invalidate_handler_cache
+
+    invalidate_handler_cache(str(item_id))
+
     return {"message": "Item added to item handler successfully"}
 
 
@@ -110,7 +114,11 @@ def remove_item_from_handler(
     # Delete the association
     session.delete(association)
     session.commit()
-    
+
+    from app.services.agent.chat_runtime import invalidate_handler_cache
+
+    invalidate_handler_cache(str(item_id))
+
     return {"message": "Item removed from item handler successfully"}
 
 

@@ -261,6 +261,13 @@ class Agent:
         if not running_servers:
             return
 
+        # 幂等捷径：运行中的 server 集合没变就不重建工具表——这个函数
+        # 每条聊天消息都会被调用一次，全量重建纯属浪费。
+        current = frozenset(running_servers)
+        if getattr(self, "_mcp_tools_loaded_for", None) == current:
+            return
+        self._mcp_tools_loaded_for = current
+
         self._load_mcp_tools()
         for server_name in running_servers:
             tools_count = len(

@@ -1136,9 +1136,9 @@ def cancel_item_plan(
                 }
                 for step in current.plan
             ]
-    # update_ticket_plan 会同步持久化——直接改内存不落盘的话，重启恢复会
-    # 把已取消的计划当成未完成计划复活。
-    reply_ticket_manager.update_ticket_plan(ticket_id, [])
+    # 立碑 + 清空 + 落盘一次完成：墓碑挡掉一切迟到的计划写入
+    # （取消时还在半空的轮次/工具调用），取消即终态，任务永不复活。
+    reply_ticket_manager.cancel_ticket_plan(ticket_id)
 
     # 4. 广播取消后的终态快照，前端条带立即消失（不用等轮询）。
     try:

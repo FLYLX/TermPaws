@@ -220,6 +220,10 @@ class ReplyTicket:
     # ticket. Identity, lifecycle and cleanup all reuse the ticket's existing
     # mechanisms; old persisted payloads without this field default to [].
     plan: list[dict] = field(default_factory=list)
+    # 用户取消的墓碑：取消后轮次可能还在半空（LLM 思考/工具执行中），
+    # 它的迟到 update_plan 会把计划重新建起来——sweep 续跑 → 任务复活。
+    # 立了碑的票据拒绝一切计划写入，取消就是终态。
+    plan_cancelled: bool = False
     # run_job 启动的 daemon 后台任务 id 列表（同一票据可并行多个 job）。
     # 结果由 backend 轮询线程送回，但进程重启后线程消亡——持久化这些 id
     # 让 resume sweep 能重新接管：向 daemon 拉取已完成的结果并注入。
@@ -544,7 +548,7 @@ class ReplyTicketManager:
             return self._tickets.get(self._resolve_ticket_id_locked(ticket_id))
 
     def update_ticket_plan(
-        self, ticket_id: str, plan_list: list[dict]
+        self, ticket_id: str, plan_list: list[dict], *, force: bool = False
     ) -> ReplyTicket | None:
         """Write the agent plan scratchpad onto a ticket and persist it."""
         if not ticket_id:
@@ -554,10 +558,25 @@ class ReplyTicketManager:
             ticket = self._tickets.get(ticket_id)
             if not ticket:
                 return None
+            if ticket.plan_cancelled and not force:
+                return None
             ticket.plan = [dict(entry) for entry in plan_list or []]
             ticket.updated_at = datetime.now()
             _persist_ticket(ticket)
             return ticket
+
+    def cancel_ticket_plan(self, ticket_id: str) -> None:
+        """取消计划的唯一入口：立碑 + 清空 + 落盘，一次完成。"""
+        if not ticket_id:
+            return
+        with self._lock:
+            ticket = self._tickets.get(self._resolve_ticket_id_locked(ticket_id))
+            if ticket is None:
+                return
+            ticket.plan_cancelled = True
+            ticket.plan = []
+            ticket.updated_at = datetime.now()
+            _persist_ticket(ticket)
 
     def cancel_plan(self, ticket_id: str, *, explanation: str = "stopped") -> list[dict] | None:
         """终止票据上的计划：步骤标记取消、清除、持久化、广播。

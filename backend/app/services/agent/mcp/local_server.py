@@ -1046,6 +1046,16 @@ class LocalMCPServer:
                     ),
                 }
             ]
+        if ticket.plan_cancelled:
+            return [
+                {
+                    "type": "text",
+                    "text": (
+                        "Error: 该任务已被用户取消（计划已终止）。本次写入被拒绝。"
+                        "不要重建计划，不要继续执行该任务的任何步骤。"
+                    ),
+                }
+            ]
 
         # GLM 类模型在并行工具调用时偶尔会补一个占位调用
         # （plan=[{step:"placeholder"}]），它会覆盖掉真实计划、逼模型下轮
@@ -1259,6 +1269,13 @@ class LocalMCPServer:
                 agent_session = agent_session_manager.get_session(str(item_id))
                 if agent_session:
                     agent_session.clear_terminal_job()
+                # bot 侧取消 = 任务终态：给票据立碑。否则 job 杀掉了但计划
+                # 还在，sweep 续跑 → agent 重建计划 → 任务复活循环。
+                ticket_id = str(args.get("_reply_ticket_id") or "").strip()
+                if ticket_id:
+                    from app.services.agent.reply_ticket import reply_ticket_manager
+
+                    reply_ticket_manager.cancel_ticket_plan(ticket_id)
                 return [{"type": "text", "text": f"后台任务已取消：{result.get('job_id', job_id)}"}]
             return [{"type": "text", "text": f"Error: {result.get('error', 'failed to cancel job')}"}]
         except Exception as e:

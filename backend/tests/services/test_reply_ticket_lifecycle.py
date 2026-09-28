@@ -569,6 +569,45 @@ def test_prune_protects_open_plan_and_pending_jobs_beyond_ttl() -> None:
     assert manager.get(plain.ticket_id) is None
 
 
+def test_cancelled_plan_rejects_late_writes() -> None:
+    """立碑后迟到的 update_plan 一律拒绝——取消即终态，任务不复活。"""
+    manager = ReplyTicketManager()
+    agent = SimpleNamespace(
+        _context=SimpleNamespace(
+            robot_id="",
+            robot_context_token="",
+            reply_ticket_id="",
+        )
+    )
+    ticket = manager.create_for_agent(
+        agent,
+        item_id="item-1",
+        handler_id="handler-1",
+        message="install something",
+        source_type="web",
+    )
+    manager.update_ticket_plan(
+        ticket.ticket_id, [{"step": "install", "status": "in_progress"}]
+    )
+    manager.cancel_ticket_plan(ticket.ticket_id)
+    assert ticket.plan == []
+    assert ticket.plan_cancelled
+
+    # 迟到的写入（取消时还在半空的轮次发出的）被拒绝
+    assert (
+        manager.update_ticket_plan(
+            ticket.ticket_id, [{"step": "install", "status": "in_progress"}]
+        )
+        is None
+    )
+    assert ticket.plan == []
+
+    # force=True 保留给系统收尾（worker 的 cancelled 最终化等）
+    assert (
+        manager.update_ticket_plan(ticket.ticket_id, [], force=True) is not None
+    )
+
+
 def test_prune_tolerates_aware_restored_timestamps() -> None:
     from datetime import timezone
 

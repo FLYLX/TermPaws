@@ -458,31 +458,9 @@ class RobotService:
             else:
                 self._pending_task_replies.pop(key, None)
 
-    def _conversation_dispatch_busy(
-        self, robot_id: uuid.UUID | str, conversation_key: str
-    ) -> bool:
-        """该会话已有 dispatch 在跑（在飞，不含排队中的）。"""
-        if not conversation_key:
-            return False
-        robot_id_text = str(robot_id)
-        with self._lock:
-            return any(
-                str(job.robot_id) == robot_id_text
-                and job.conversation_key == conversation_key
-                for _key, (_started, job) in self._active_dispatch_jobs.items()
-            )
-
     def _dispatch_worker_loop(self) -> None:
         while True:
             job = self._dispatch_queue.get()
-            # 一个会话同时只有一个轮次：多 worker 并行不能打破这条不变式，
-            # 否则同一任务双开——两张票据两份计划，条带"自己变多"。
-            # 忙就放回队尾让别的会话先走，稍后轮到。
-            if self._conversation_dispatch_busy(job.robot_id, job.conversation_key):
-                self._dispatch_queue.task_done()
-                time.sleep(0.5)
-                self._dispatch_queue.put(job)
-                continue
             tracking_key = job.job_id or uuid.uuid4().hex
             with self._lock:
                 self._active_dispatch_jobs[tracking_key] = (time.monotonic(), job)

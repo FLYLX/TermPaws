@@ -1140,12 +1140,34 @@ class LocalMCPServer:
         all_terminal = all(
             item["status"] in {"completed", "cancelled"} for item in normalized
         )
+        had_plan_before = bool(ticket.plan)
         # Once every step reached a terminal state, broadcast the final
         # snapshot once, then clear the plan from the ticket so finished work
         # leaves the plan table immediately (no extra plan=[] call needed).
         reply_ticket_manager.update_ticket_plan(
             ticket.ticket_id, [] if all_terminal else normalized
         )
+
+        # 新建计划的写入点查重：轮次开始时的"已有计划"注入存在竞态——
+        # 两个并行轮次可能都在对方建计划之前构建了上下文。后到者的写入
+        # 落在这里时旧计划已存在，立刻提示接管，双计划不会并行跑下去。
+        duplicate_warning = ""
+        if not had_plan_before and not all_terminal:
+            others = [
+                entry
+                for entry in reply_ticket_manager.active_plans_for_item(item_id)
+                if str(entry.get("ticket_id") or "") != ticket.ticket_id
+            ]
+            if others:
+                duplicate_warning = (
+                    "⚠ 注意：该终端还有另一个进行中的计划（"
+                    + "; ".join(
+                        f"票据 {str(entry.get('ticket_id'))[:8]}「{str(entry.get('request') or '')[:40]}」"
+                        for entry in others[:2]
+                    )
+                    + "）。若与本次是同一任务，立刻用 update_plan(supersede_ticket_ids=[票据id]) "
+                    "接管并关闭旧计划，不要并行重复执行。"
+                )
         try:
             from app.services.agent.stream_manager import stream_manager
 
@@ -1169,6 +1191,8 @@ class LocalMCPServer:
             for index, item in enumerate(normalized, start=1)
         )
         lines.extend(superseded_notes)
+        if duplicate_warning:
+            lines.append(duplicate_warning)
         if explanation:
             lines.append(f"Note: {explanation}")
         if all(item["status"] == "completed" for item in normalized):

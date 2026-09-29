@@ -3202,10 +3202,10 @@ def test_pending_qq_batch_merges_same_sender_into_one_reply_intent(
     assert len(queued_jobs) == 1
     job = queued_jobs[0]
     assert job["followup_reply_target"].metadata["allow_multiple_reply_messages"] is False
-    # 内容不同的消息是独立问题，全部保留逐条回答。
+    # 内容不同的消息都要保留且被覆盖，但回复引导是语义融合成一条气泡。
     assert "Are you there?" in job["composed_message"]
     assert "Reply now" in job["composed_message"]
-    assert "独立问题" in job["composed_message"]
+    assert "语义融合" in job["composed_message"]
 
 
 def test_plain_task_control_message_dispatches_immediately_while_processing(

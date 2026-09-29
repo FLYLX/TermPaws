@@ -2100,9 +2100,9 @@ class RobotService:
             )
             index += 1
         lines.append(
-            "每条内容不同的消息都是独立问题，逐条各答一次（如 1+1、2+2 要分别回答）；"
-            "同一内容重复的才算同一条，只答一次。"
-            "If multiple distinct senders each asked the bot something, answer each sender once in order. Default to one concise QQ bubble per question."
+            "每条内容不同的消息都要覆盖到（不能漏答），但回复要语义融合成一条简短气泡："
+            "多个问题的答案揉成一句自然的话（如\"你在哪\"\"你在干嘛\"→\"我在外面吹风\"），"
+            "不要逐条分开发多个气泡。只有不同发送者各自提问且必须区分时，才在一条里点名对应。"
         )
         return "\n".join(lines)
 

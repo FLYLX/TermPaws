@@ -94,22 +94,19 @@ class RobotMCPServer:
                     "text": {
                         "type": "string",
                         "description": (
-                            "Single QQ message text. No blank lines or multiple "
-                            "blocks inside. Group replies: keep within 36 "
-                            "characters; use messages for more."
+                            "Single QQ message text: one short sentence, no blank "
+                            "lines or multiple blocks inside. 要说的句子多于一句时"
+                            "用 messages 数组逐条发，不要往 text 里塞长段。"
                         ),
                     },
                     "messages": {
                         "type": "array",
                         "items": {"type": "string"},
                         "minItems": 1,
-                        "maxItems": 3,
                         "description": (
-                            "Optional 1-3 ordered messages for a natural "
-                            "multi-message reply; each item is sent as one QQ "
-                            "message in order. Each item is one complete thought: "
-                            "no fragments, no blank lines inside, not for long "
-                            "logs or summaries."
+                            "多条回复按句拆：每条是一句简短的话，按顺序依次发出；"
+                            "句数没有硬上限，需要几句就几句，只要每句意思清楚简短。"
+                            "每条内部不含空行，不放长日志或长摘要。"
                         ),
                     },
                     "target_type": {
@@ -1235,13 +1232,9 @@ class RobotMCPServer:
                 continue
             seen.add(normalized)
             unique_messages.append(normalized)
-        if not unique_messages:
-            return []
-        # Persona-style segmentation is allowed: up to 3 natural bubbles.
-        # Anything more reads as spam and is merged back into one bubble.
-        if len(unique_messages) <= 3:
-            return unique_messages
-        return [" ".join(unique_messages)]
+        # 只做去重，不做合并：句数没有上限，agent 按语义决定发几条。
+        # 之前 >3 条就用空格拼成一段，正是"长段之间有空格"的来源。
+        return unique_messages
 
     @staticmethod
     def _single_text_too_long_for_group(
@@ -1259,8 +1252,8 @@ class RobotMCPServer:
     def _group_single_text_too_long_error(text: str) -> str:
         return (
             "Error: QQ group reply is too long for a single `text` message. "
-            "Shorten it and retry, or split the answer into 2-3 short natural "
-            "bubbles with `messages`. Single group text limit: "
+            "Split it into per-sentence short messages with the `messages` array "
+            "(as many as needed, no hard cap). Single group text limit: "
             f"{MAX_GROUP_SINGLE_TEXT_CHARS} chars. Current text length: "
             f"{len(text)} chars."
         )

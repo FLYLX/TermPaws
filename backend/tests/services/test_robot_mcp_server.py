@@ -477,7 +477,7 @@ def test_robot_mcp_send_message_rejects_long_group_text(monkeypatch) -> None:
 
     assert result[0]["type"] == "text"
     assert "too long for a single `text` message" in result[0]["text"]
-    assert "Shorten it" in result[0]["text"]
+    assert "messages" in result[0]["text"]
     assert sent == []
 
 
@@ -2129,11 +2129,12 @@ def test_coalesce_allows_up_to_three_bubbles(monkeypatch) -> None:
     assert result == messages
 
 
-def test_coalesce_merges_more_than_three_bubbles() -> None:
+def test_coalesce_never_merges_bubbles() -> None:
     server = RobotMCPServer()
-    messages = ["一", "二", "三", "四"]
+    messages = ["一", "二", "三", "四", "五"]
     result = server._coalesce_current_context_messages(_fake_qq_context(), messages)
-    assert result == ["一 二 三 四"]
+    # 句数无上限：只做去重，绝不合并成一段
+    assert result == ["一", "二", "三", "四", "五"]
 
 
 def test_coalesce_dedupes_bubbles() -> None:

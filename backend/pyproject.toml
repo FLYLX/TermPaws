@@ -1,6 +1,6 @@
 [project]
 name = "termpaws-backend"
-version = "0.7.8"
+version = "0.7.9"
 description = "TermPaws backend server (FastAPI + embedded robot bridge)"
 requires-python = ">=3.10,<4.0"
 dependencies = [

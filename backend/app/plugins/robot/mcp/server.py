@@ -34,7 +34,7 @@ from app.plugins.robot.reply_intent import is_no_reply_intent
 
 logger = logging.getLogger(__name__)
 
-MAX_GROUP_SINGLE_TEXT_CHARS = 96
+
 DEFAULT_MEMORY_RECENT_LINES = 8
 ACTIVE_CONTEXT_MEMORY_MAX_LINES = 12
 GENERAL_MEMORY_MAX_LINES = 500
@@ -1235,28 +1235,6 @@ class RobotMCPServer:
         # 只做去重，不做合并：句数没有上限，agent 按语义决定发几条。
         # 之前 >3 条就用空格拼成一段，正是"长段之间有空格"的来源。
         return unique_messages
-
-    @staticmethod
-    def _single_text_too_long_for_group(
-        args: dict,
-        target: RobotReplyTarget,
-        messages: list[str],
-    ) -> bool:
-        if RobotMCPServer._uses_messages_array(args):
-            return False
-        if len(messages) != 1 or not is_group_reply_target(target):
-            return False
-        return len(messages[0]) > MAX_GROUP_SINGLE_TEXT_CHARS
-
-    @staticmethod
-    def _group_single_text_too_long_error(text: str) -> str:
-        return (
-            "Error: QQ group reply is too long for a single `text` message. "
-            "Split it into per-sentence short messages with the `messages` array "
-            "(as many as needed, no hard cap). Single group text limit: "
-            f"{MAX_GROUP_SINGLE_TEXT_CHARS} chars. Current text length: "
-            f"{len(text)} chars."
-        )
 
     @staticmethod
     def _memory_line_limit(
@@ -2498,16 +2476,6 @@ class RobotMCPServer:
                 )
                 attempted_robot_id = robot_id
                 attempted_mode = "explicit_targets"
-                if any(
-                    self._single_text_too_long_for_group(args, target, messages)
-                    for target in explicit_targets
-                ):
-                    return [
-                        {
-                            "type": "text",
-                            "text": self._group_single_text_too_long_error(messages[0]),
-                        }
-                    ]
                 return self._send_explicit_targets(
                     robot_bridge_client=robot_bridge_client,
                     robot_id=robot_id,
@@ -2545,13 +2513,6 @@ class RobotMCPServer:
                     mode="explicit_target",
                     args=args,
                 )
-                if self._single_text_too_long_for_group(args, explicit_target, messages):
-                    return [
-                        {
-                            "type": "text",
-                            "text": self._group_single_text_too_long_error(messages[0]),
-                        }
-                    ]
                 sent_messages = self._send_messages(
                     robot_bridge_client,
                     robot_id,
@@ -2587,13 +2548,6 @@ class RobotMCPServer:
                     mode="context_target",
                     args=args,
                 )
-                if self._single_text_too_long_for_group(args, context_target, messages):
-                    return [
-                        {
-                            "type": "text",
-                            "text": self._group_single_text_too_long_error(messages[0]),
-                        }
-                    ]
                 sent_messages = self._send_messages(
                     robot_bridge_client,
                     robot_id,
@@ -2624,13 +2578,6 @@ class RobotMCPServer:
                 mode="current_context",
                 args=args,
             )
-            if self._single_text_too_long_for_group(args, attempted_target, messages):
-                return [
-                    {
-                        "type": "text",
-                        "text": self._group_single_text_too_long_error(messages[0]),
-                    }
-                ]
             sent_messages = self._send_messages(
                 robot_bridge_client,
                 attempted_robot_id,

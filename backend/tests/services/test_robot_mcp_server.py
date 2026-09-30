@@ -448,7 +448,8 @@ def test_robot_mcp_send_message_unwraps_structured_text_blocks(monkeypatch) -> N
     ]
 
 
-def test_robot_mcp_send_message_rejects_long_group_text(monkeypatch) -> None:
+def test_robot_mcp_send_message_long_text_sends_without_hard_cap(monkeypatch) -> None:
+    """单气泡长度不再有硬上限：长文照发，节奏完全由 agent 判断。"""
     server = RobotMCPServer()
     sent: list[str] = []
 
@@ -468,7 +469,7 @@ def test_robot_mcp_send_message_rejects_long_group_text(monkeypatch) -> None:
     result = server.call_tool(
         "send_message",
         {
-            "text": "x" * 97,
+            "text": "x" * 500,
             "target_type": "group",
             "target_id": "123456",
             "_TermPaws_user_id": "user-1",
@@ -476,9 +477,8 @@ def test_robot_mcp_send_message_rejects_long_group_text(monkeypatch) -> None:
     )
 
     assert result[0]["type"] == "text"
-    assert "too long for a single `text` message" in result[0]["text"]
-    assert "messages" in result[0]["text"]
-    assert sent == []
+    assert "Message sent" in result[0]["text"]
+    assert sent == ["x" * 500]
 
 
 def test_robot_mcp_send_message_compacts_paragraphs_inside_each_message(

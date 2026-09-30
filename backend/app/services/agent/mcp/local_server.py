@@ -28,9 +28,6 @@ JOB_RESULT_POLL_INTERVAL_SECONDS = 2.0
 JOB_RESULT_POLL_MAX_ERRORS = 30
 COMMAND_DISPATCH_FAILED_MARKER = "command_dispatch_failed"
 TERMINAL_UNAVAILABLE_RESULT_MARKER = "terminal_unavailable"
-# 同一终端后台任务的并发上限：唯一合理的流量背压（防"疯狂装 java"式增殖），
-# 不涉及命令内容判断。
-MAX_CONCURRENT_BACKGROUND_JOBS = 5
 
 # Background job result coalescing: results arriving while a turn is running
 # are buffered in the system-level input merge buffer and merged into ONE
@@ -404,7 +401,7 @@ class LocalMCPServer:
         )
         self.register_tool(
             name="run_job",
-            description="后台一次性命令，只需最终结果。用于下载、安装、构建、查询等不需要交互的操作。可并行多个不同任务。用户明确要求的安装/运行直接用本工具执行，无需先向用户确认。大型安装（如 JDK 等几百 MB 的包）必须显式设大 timeout_seconds（如 1800）。",
+            description="后台一次性命令，只需最终结果。用于下载、安装、构建、查询等不需要交互的操作。可并行多个不同任务，但已有相同目的的后台任务在跑（装同类软件/下载同类文件）时不要再发起，等它完成或用 mcp_local_cancel_job 取消。用户明确要求的安装/运行直接用本工具执行，无需先向用户确认。大型安装（如 JDK 等几百 MB 的包）必须显式设大 timeout_seconds（如 1800）。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1402,10 +1399,8 @@ class LocalMCPServer:
                 "item_title": item.title,
             }
 
-            # 并发背压阀：同一终端同时最多 MAX_CONCURRENT_BACKGROUND_JOBS 个
-            # 后台任务。远端实测：apt 类慢任务超时后 agent 换着花样重试，
-            # 几十条长超时命令并发互锁"疯狂增殖"——这是唯一合理的硬闸，
-            # 不是内容判断，满了就把事实交给 agent 自己决定等还是取消。
+            # 只提供事实，不拦截：把在跑任务列表和数量摆在结果里，
+            # agent 自己判断是否该开新任务（它看得见就不会重复开）。
             _dup_hint = ""
             _running_jobs: list[dict] = []
             try:
@@ -1413,31 +1408,16 @@ class LocalMCPServer:
                 _running_jobs = list((_existing or {}).get("jobs", []))
             except Exception:
                 _running_jobs = []
-            if len(_running_jobs) >= MAX_CONCURRENT_BACKGROUND_JOBS:
-                lines = [
-                    f"拒绝启动：该终端已有 {len(_running_jobs)} 个后台任务在跑"
-                    f"（上限 {MAX_CONCURRENT_BACKGROUND_JOBS}）："
-                ]
-                for _j in _running_jobs[:8]:
-                    lines.append(
-                        f" - job_id={_j.get('job_id','')} "
-                        f"elapsed={int(float(_j.get('elapsed_seconds') or 0))}s "
-                        f"cmd={str(_j.get('command',''))[:60]}"
+            if _running_jobs:
+                _dup_hint = (
+                    f"\n注意：当前已有 {len(_running_jobs)} 个后台任务在跑："
+                    + "; ".join(
+                        f"{str(_j.get('job_id',''))[:8]}={str(_j.get('command',''))[:40]}"
+                        for _j in _running_jobs[:5]
                     )
-                lines.append(
-                    "不要再发起新任务。选择一个：等待其中某项完成；"
-                    "或用 mcp_local_cancel_job 取消重复/卡死的任务后再发起。"
+                    + "。若有与你目的相同的（装同类软件/下载同类文件），不要重复发起——"
+                    "等它完成，或先用 mcp_local_cancel_job 取消。"
                 )
-                return [{"type": "text", "text": "\n".join(lines)}]
-            for _j in _running_jobs:
-                if str(_j.get("command", "")).strip() == command:
-                    _dup_hint = (
-                        f" WARNING: identical command already running as "
-                        f"job_id={_j.get('job_id','')} "
-                        f"elapsed={int(float(_j.get('elapsed_seconds') or 0))}s. "
-                        f"Consider waiting for it instead of starting a duplicate."
-                    )
-                    break
 
             self._start_background_job_thread(
                 item_id=str(item_id),

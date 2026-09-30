@@ -2965,7 +2965,12 @@ class AgentSession:
             has_content = True
 
         daemon_jobs = self._get_daemon_jobs_snapshot()
-        for job in daemon_jobs[:5]:
+        if len(daemon_jobs) > 1:
+            lines.append(
+                f"⚠ 已有 {len(daemon_jobs)} 个后台任务并发在跑——不要再发起新的后台任务，"
+                "先等它们完成或用 cancel_job 清掉重复/卡死的任务。"
+            )
+        for job in daemon_jobs[:10]:
             command = self._short_command(str(job.get("command") or ""), max_length=120)
             try:
                 elapsed = int(float(job.get("elapsed_seconds") or 0))

@@ -28,6 +28,9 @@ JOB_RESULT_POLL_INTERVAL_SECONDS = 2.0
 JOB_RESULT_POLL_MAX_ERRORS = 30
 COMMAND_DISPATCH_FAILED_MARKER = "command_dispatch_failed"
 TERMINAL_UNAVAILABLE_RESULT_MARKER = "terminal_unavailable"
+# 同一终端后台任务的并发上限：唯一合理的流量背压（防"疯狂装 java"式增殖），
+# 不涉及命令内容判断。
+MAX_CONCURRENT_BACKGROUND_JOBS = 5
 
 # Background job result coalescing: results arriving while a turn is running
 # are buffered in the system-level input merge buffer and merged into ONE
@@ -1399,21 +1402,42 @@ class LocalMCPServer:
                 "item_title": item.title,
             }
 
-            # Check for duplicate running command
+            # 并发背压阀：同一终端同时最多 MAX_CONCURRENT_BACKGROUND_JOBS 个
+            # 后台任务。远端实测：apt 类慢任务超时后 agent 换着花样重试，
+            # 几十条长超时命令并发互锁"疯狂增殖"——这是唯一合理的硬闸，
+            # 不是内容判断，满了就把事实交给 agent 自己决定等还是取消。
             _dup_hint = ""
+            _running_jobs: list[dict] = []
             try:
                 _existing = connection.call("list_jobs", {"item_uuid": str(item_id)})
-                for _j in (_existing or {}).get("jobs", []):
-                    if str(_j.get("command", "")).strip() == command:
-                        _dup_hint = (
-                            f" WARNING: identical command already running as "
-                            f"job_id={_j.get('job_id','')} "
-                            f"elapsed={int(float(_j.get('elapsed_seconds',0)))}s. "
-                            f"Consider waiting for it instead of starting a duplicate."
-                        )
-                        break
+                _running_jobs = list((_existing or {}).get("jobs", []))
             except Exception:
-                pass
+                _running_jobs = []
+            if len(_running_jobs) >= MAX_CONCURRENT_BACKGROUND_JOBS:
+                lines = [
+                    f"拒绝启动：该终端已有 {len(_running_jobs)} 个后台任务在跑"
+                    f"（上限 {MAX_CONCURRENT_BACKGROUND_JOBS}）："
+                ]
+                for _j in _running_jobs[:8]:
+                    lines.append(
+                        f" - job_id={_j.get('job_id','')} "
+                        f"elapsed={int(float(_j.get('elapsed_seconds') or 0))}s "
+                        f"cmd={str(_j.get('command',''))[:60]}"
+                    )
+                lines.append(
+                    "不要再发起新任务。选择一个：等待其中某项完成；"
+                    "或用 mcp_local_cancel_job 取消重复/卡死的任务后再发起。"
+                )
+                return [{"type": "text", "text": "\n".join(lines)}]
+            for _j in _running_jobs:
+                if str(_j.get("command", "")).strip() == command:
+                    _dup_hint = (
+                        f" WARNING: identical command already running as "
+                        f"job_id={_j.get('job_id','')} "
+                        f"elapsed={int(float(_j.get('elapsed_seconds') or 0))}s. "
+                        f"Consider waiting for it instead of starting a duplicate."
+                    )
+                    break
 
             self._start_background_job_thread(
                 item_id=str(item_id),

@@ -28,13 +28,6 @@ export function TerminalOutputPanel({
   const { isConnected, isConnecting, error, output, sendCommand, sendCtrlC, reconnect } =
     useTerminalConnection({ itemId, enabled: running })
 
-  useEffect(() => {
-    const el = outputRef.current
-    if (el && stickToBottomRef.current) {
-      el.scrollTop = el.scrollHeight
-    }
-  }, [])
-
   const handleSend = () => {
     const trimmed = command.trim()
     if (!trimmed || !isConnected) return
@@ -48,6 +41,14 @@ export function TerminalOutputPanel({
   const visibleOffset = Math.max(0, output.length - TERMINAL_RENDER_WINDOW)
   const visibleOutput =
     visibleOffset > 0 ? output.slice(visibleOffset) : output
+
+  // 新输出到达时自动滚到底（仅当用户没有手动上翻——上翻查看历史时不打断）
+  useEffect(() => {
+    const el = outputRef.current
+    if (el && stickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [visibleOutput])
 
   if (!running) {
     return (

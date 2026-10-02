@@ -1516,15 +1516,20 @@ class RobotMCPServer:
                     exc,
                 )
                 continue
+            has_context = bool(robot_id or conversation_key or speaker_global_key)
             for memory in memories:
                 if not self._memory_usable(memory):
                     continue
-                if self._memory_scope_rank(
+                rank = self._memory_scope_rank(
                     memory,
                     robot_id=robot_id,
                     conversation_key=conversation_key,
                     speaker_global_key=speaker_global_key,
-                ) < 0:
+                )
+                # 作用域过滤只在"有明确身份/会话上下文"时生效（区分不同群友）；
+                # 没有任何上下文（web/后台）时，rank<0 不代表不该看——
+                # 不做排除，否则 web 用户自己的记忆都会凭空消失。
+                if rank < 0 and has_context:
                     continue
                 candidates.append(memory)
         return candidates
@@ -1569,7 +1574,10 @@ class RobotMCPServer:
                 conversation_key=conversation_key,
                 speaker_global_key=speaker_global_key,
             )
-            if scope_rank < 0:
+            # 同收集阶段：没有任何身份/会话上下文（web/后台）时不做作用域排除，
+            # 否则 web 用户的 speaker 作用域记忆会凭空消失。
+            has_context = bool(robot_id or conversation_key or speaker_global_key)
+            if scope_rank < 0 and has_context:
                 continue
             ranked.append(
                 (

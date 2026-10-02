@@ -1198,7 +1198,10 @@ class LocalMCPServer:
         if all(item["status"] == "completed" for item in normalized):
             lines.append(
                 "All steps complete. Report the final result to the user now "
-                "(QQ: mcp_robot_send_message; web: direct reply)."
+                "(QQ: mcp_robot_send_message; web: direct reply). "
+                "If the same information was already covered by a recent reply "
+                "(even in different wording), do NOT repeat it — a one-line "
+                "confirmation is enough."
             )
         elif all(item["status"] == "cancelled" for item in normalized):
             lines.append(

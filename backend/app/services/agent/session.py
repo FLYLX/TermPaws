@@ -2886,6 +2886,11 @@ class AgentSession:
                     }
                 )
         self.inject_active_jobs_prompt_context(messages)
+        # QQ/终端路径也要看到"已有进行中的计划"——此前只 web chat 路径有，
+        # QQ 轮次对别的票据上的 plan 完全失明，正是重复开任务的机制缺口。
+        self.inject_open_plans_prompt_context(
+            messages, exclude_ticket_id=input_msg.reply_ticket_id
+        )
         return messages
     def _get_daemon_jobs_snapshot(self) -> list[dict[str, Any]]:
         now = datetime.now()

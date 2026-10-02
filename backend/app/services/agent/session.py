@@ -2367,13 +2367,6 @@ class AgentSession:
                 pending_command=pending_before_analysis,
             )
             extract_integration_context_targets(agent, messages)
-            tools = select_tools_for_turn(
-                agent.get_tools_for_litellm(),
-                source="terminal",
-                query=input_msg.query or analysis.content,
-                agent=agent,
-                reply_ticket_id=input_msg.reply_ticket_id,
-            )
             turn_guard = TurnGuard()
             self._current_turn_id = turn_guard.turn_id
             self._emit_running_terminal_status(analysis.terminal_source)
@@ -2417,8 +2410,16 @@ class AgentSession:
                         }
                     )
 
-                iteration_tools = [] if finalization_only else tools
-                response = self._call_llm(agent, messages, tools=iteration_tools)
+                # 每次迭代重算工具表：prepare_capabilities 中途加载的工具
+                # 必须本轮可调用，否则模型只能反复 prepare 打转直到守卫停机。
+                tools = [] if finalization_only else select_tools_for_turn(
+                    agent.get_tools_for_litellm(),
+                    source="terminal",
+                    query=input_msg.query or analysis.content,
+                    agent=agent,
+                    reply_ticket_id=input_msg.reply_ticket_id,
+                )
+                response = self._call_llm(agent, messages, tools=tools)
                 message = self._normalize_dsml_tool_message(
                     response.choices[0].message,
                     tools,
@@ -2668,18 +2669,9 @@ class AgentSession:
             loop.run_until_complete(agent.start_mcp_servers())
 
             messages = self._build_chat_messages(agent, input_msg)
-            tools = select_tools_for_turn(
-                agent.get_tools_for_litellm(),
-                source="web",
-                query=input_msg.query or input_msg.content,
-                agent=agent,
-                reply_ticket_id=input_msg.reply_ticket_id,
-            )
             turn_guard = TurnGuard()
             self._current_turn_id = turn_guard.turn_id
             self.emit_status("running", "回复中")
-
-            self._log_prompt_budget(messages, tools, context="chat")
 
             turn_final_content = ""
             turn_completed = False
@@ -2698,6 +2690,17 @@ class AgentSession:
                     self.emit_status("interrupted", "当前轮已中断")
                     break
 
+                # 每次迭代重算工具表：prepare_capabilities 中途加载的工具
+                # 必须本轮可调用，否则模型只能反复 prepare 打转直到守卫停机。
+                tools = select_tools_for_turn(
+                    agent.get_tools_for_litellm(),
+                    source="web",
+                    query=input_msg.query or input_msg.content,
+                    agent=agent,
+                    reply_ticket_id=input_msg.reply_ticket_id,
+                )
+                if _ == 0:
+                    self._log_prompt_budget(messages, tools, context="chat")
                 response = self._call_llm(agent, messages, tools=tools)
                 message = self._normalize_dsml_tool_message(
                     response.choices[0].message,

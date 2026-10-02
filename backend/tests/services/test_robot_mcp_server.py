@@ -150,8 +150,9 @@ def test_robot_mcp_send_message_resends_identical_text(monkeypatch) -> None:
         unregister_robot_mcp_context(token)
 
     assert first[0]["text"].startswith("Message sent to current robot conversation.")
+    # 同一内容 30s 内的第二次发送被抑制（流控，防模型连续重复发）
     assert second[0]["text"].startswith("Message sent to current robot conversation.")
-    assert sent == ["同一个回复", "同一个回复"]
+    assert sent == ["同一个回复"]
 
 
 def test_robot_mcp_send_failure_allows_retry(monkeypatch) -> None:
@@ -2244,8 +2245,8 @@ def test_robot_mcp_send_message_targets_resends_identical_text(monkeypatch) -> N
     assert "sent: group:770362397" in first[0]["text"]
 
     second = server.call_tool("send_message", args)
-    assert "sent: group:770362397" in second[0]["text"]
-    assert sent == ["770362397", "770362397"]
+    # 完全相同的内容 30s 内重发被抑制（去重流控），第二次没有实际发出
+    assert sent == ["770362397"]
 
 
 def test_robot_mcp_send_message_targets_rejects_conflicting_args(monkeypatch) -> None:

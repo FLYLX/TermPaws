@@ -1102,6 +1102,14 @@ class RobotMCPServer:
     def _clear_delivered_targets_for_test(cls) -> None:
         with cls._delivered_targets_lock:
             cls._delivered_targets.clear()
+        with RobotMCPServer._recent_sends_lock:
+            RobotMCPServer._recent_sends.clear()
+
+    # 完全相同的内容在短时间窗内的重复发送一律抑制——不是内容判断，
+    # 是防"模型连续两轮调了同一个发送"的流控（和队列去重同类）。
+    _RECENT_SEND_DUP_WINDOW_SECONDS = 30.0
+    _recent_sends: dict[tuple[str, str, str], datetime] = {}
+    _recent_sends_lock = threading.Lock()
 
     def _send_messages(
         self,
@@ -1111,8 +1119,38 @@ class RobotMCPServer:
         messages: list[str],
     ) -> list[str]:
         sent_messages: list[str] = []
+        now = datetime.now()
+        with self._recent_sends_lock:
+            for key, ts in list(self._recent_sends.items()):
+                if (now - ts).total_seconds() > self._RECENT_SEND_DUP_WINDOW_SECONDS:
+                    self._recent_sends.pop(key, None)
         for message in messages:
+            normalized = str(message or "").strip()
+            dup_key = (
+                str(robot_id),
+                str(target.target_type or ""),
+                str(target.target_id or ""),
+                normalized,
+            )
+            with self._recent_sends_lock:
+                last_sent = self._recent_sends.get(dup_key)
+                if (
+                    normalized
+                    and last_sent is not None
+                    and (now - last_sent).total_seconds()
+                    < self._RECENT_SEND_DUP_WINDOW_SECONDS
+                ):
+                    logger.info(
+                        "[RobotMCPServer] Suppressed duplicate send to %s:%s: %r",
+                        target.target_type,
+                        target.target_id,
+                        normalized[:40],
+                    )
+                    continue
             bridge_client.send_message(robot_id, target, message)
+            # 发送成功才登记——失败的消息不算发过，允许重试。
+            with self._recent_sends_lock:
+                self._recent_sends[dup_key] = datetime.now()
             sent_messages.append(message)
         return sent_messages
 

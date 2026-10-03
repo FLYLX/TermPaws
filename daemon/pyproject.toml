@@ -1,6 +1,6 @@
 [project]
 name = "termpaws-daemon"
-version = "0.9.3"
+version = "0.9.4"
 description = "TermPaws Daemon Service"
 requires-python = ">=3.10"
 dependencies = [

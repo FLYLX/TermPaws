@@ -94,9 +94,8 @@ class RobotMCPServer:
                     "text": {
                         "type": "string",
                         "description": (
-                            "Single QQ message text: one short sentence, no blank "
-                            "lines or multiple blocks inside. 要说的句子多于一句时"
-                            "用 messages 数组逐条发，不要往 text 里塞长段。"
+                            "Only for a single complete short sentence. 多句内容"
+                            "一律用 messages 数组，不要用 text 拼接/塞长段。"
                         ),
                     },
                     "messages": {
@@ -104,9 +103,9 @@ class RobotMCPServer:
                         "items": {"type": "string"},
                         "minItems": 1,
                         "description": (
-                            "多条回复按句拆：每条是一句简短的话，按顺序依次发出；"
-                            "句数没有硬上限，需要几句就几句，只要每句意思清楚简短。"
-                            "每条内部不含空行，不放长日志或长摘要。"
+                            "回复的主形态：每条是一句口语短句，作为独立气泡按顺序"
+                            "逐条发出（像人打字，一句一条）。多句回复都用它；"
+                            "句数没有上限，每句短即可。"
                         ),
                     },
                     "target_type": {
@@ -1110,6 +1109,24 @@ class RobotMCPServer:
     _RECENT_SEND_DUP_WINDOW_SECONDS = 30.0
     _recent_sends: dict[tuple[str, str, str], datetime] = {}
     _recent_sends_lock = threading.Lock()
+
+    @staticmethod
+    def _bubble_form_feedback(messages: list[str]) -> str:
+        """长段单气泡的反馈提示：只反馈不拦截，agent 自己看着办。
+
+        单条 text 超过 80 字且含 2+ 句标点，说明把多句挤进了一个气泡——
+        告诉它下次用 messages 数组按句拆。消息本身已经发出去了。
+        """
+        text = str(messages[0] or "") if len(messages) == 1 else ""
+        if not text:
+            return ""
+        sentence_marks = sum(text.count(ch) for ch in "。！？!？")
+        if len(text) > 80 and sentence_marks >= 2:
+            return (
+                f"[形态提示] 你刚发的这条是 {len(text)} 字的长段，挤了 {sentence_marks} 句。"
+                "一句一个气泡才是正常形态——下次这种内容用 messages 数组按句拆开发。"
+            )
+        return ""
 
     def _send_messages(
         self,
@@ -2631,10 +2648,14 @@ class RobotMCPServer:
                 messages,
             )
             self._remember_sent_messages(attempted_robot_id, attempted_target, sent_messages, args=args)
+            result_text = "Message sent to current robot conversation."
+            form_note = self._bubble_form_feedback(messages)
+            if form_note:
+                result_text += f"\n{form_note}"
             return [
                 {
                     "type": "text",
-                    "text": "Message sent to current robot conversation.",
+                    "text": result_text,
                 }
             ]
         except Exception as exc:

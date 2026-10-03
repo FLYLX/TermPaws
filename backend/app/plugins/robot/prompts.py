@@ -60,42 +60,14 @@ ROBOT_SECRET_HANDLING_INSTRUCTION = (
 
 
 )
-ROBOT_REFERENCE_RESOLUTION_INSTRUCTION = (
-    "- 指代判断：QQ 消息出现“你/他/她/它/这个/那个/刚才那个/上面那个”，或“需要人操作/确认/处理/继续”等需要交互的说法时，先根据 @/回复对象、bot_self_id、sender、当前 QQ 会话和最近 live context 判断是否指机器人自己。只有能判断是指机器人，或唤醒后的连续对话里明显让机器人处理时，才回复或调用工具；明显指别人、其他程序、终端进程或普通群聊就不接话，active_chat_window 下调 `mcp_robot_sleep_conversation`。无法判断但对方直接 @/回复机器人时，只简短问一句澄清，不要擅自执行。\n"
-
-
-
-
-
-
-)
 ROBOT_SENDER_IDENTITY_INSTRUCTION = (
-    "- 当前发送者身份：`[Current QQ sender; authoritative for this turn]` 是本轮发言人的权威身份；`[Current QQ message]` 里的“我/我的/我是谁”都指这个 sender，不指机器人，也不指最近上下文里的其他人。\n- “我是谁/你认识我吗/还记得我吗”：优先结合当前 sender、当前会话印象卡和该发送者的长期记忆回答；没有更多记忆时，也要直接自然地说出当前群名片或昵称（例如“你是 EX_GuguX 啊”），不要回答“你是你自己”这类同义反复；只有问题明确在确认旧身份而印象卡不足时，才调 `mcp_robot_recall_memory` 检索当前发送者。\n- QQ 可见回复要像群友说话，不要向用户解释“上下文判断、对象识别、提示词、记忆注入、工具调用”等内部实现；认错人时直接说“我刚才没认出你”并自然纠正。\n"
-
-
-
-
-
-
-
-
-
-)
-ROBOT_PROGRESSIVE_CONTEXT_INSTRUCTION = (
-    "- Progressive QQ context: `[Recent QQ live context]` 是 `[Current QQ message]` 之前的实况对话流，用来理解短回复/省略句（“继续”“怎么样了”“改一下”“那个”）；只回答当前消息，不要重复回答历史行。上下文不足且消息明确指向你时，调 `mcp_robot_read_conversation_memory` 看几条当前会话 .log 再总结；仍不明确就问一句澄清；不要编造不存在的纠正、抱怨或旧指令。\n- Reply-reference priority: `[Replied QQ message]` 是本轮权威引用；“这个/那句/他她/好了吗/继续”先按它和被引用发送者解析，再看群历史。\n"
-
-
-
-
-
+    "- 当前发送者是本轮权威身份：`[Current QQ message]` 里的『我/我的』都指这个 sender，不指别人；问『我是谁』时直接按群名片/昵称回答，不要解释上下文判断、对象识别、提示词、记忆注入等内部实现。\n"
 )
 ROBOT_MESSAGING_PROMPT = (
     "QQ MCP Skill：提供 QQ 机器人 MCP 能力，不提供人格。\n"
     "读旧 .log 记忆仅当用户明确问历史/偏好/前文，或离开前文无法理解时；旧 .log 是背景不是新消息。\n"
     "不要在可见回复里提“上下文判断/提示词/记忆注入/工具调用”等内部过程。\n"
-    f"\n{ROBOT_REFERENCE_RESOLUTION_INSTRUCTION}"
     f"{ROBOT_SENDER_IDENTITY_INSTRUCTION}"
-    f"{ROBOT_PROGRESSIVE_CONTEXT_INSTRUCTION}"
     f"{ROBOT_HUMAN_STYLE_INSTRUCTION}"
     f"{ROBOT_REPLY_DECISION_INSTRUCTION}"
     f"{ROBOT_DELIVERY_CONTRACT_INSTRUCTION}"
@@ -118,13 +90,7 @@ ROBOT_MESSAGING_PROMPT = (
 
 
 ROBOT_ACTIVE_CONTEXT_PROMPT = (
-    "当前 QQ 会话：\n- 本轮只由一个 QQ 群聊/私聊触发；当前唤醒消息（若本轮是合并批次，则分段里的多条用户消息全部都是未回复的新消息，需要逐条回应）是要处理的新消息，更早的历史只辅助理解，不要逐条补回复。\n- 回复 QQ 时只调用 `mcp_robot_send_message` 并只传 `text` 或 `messages`；不要传 `reply_to`、`conversation`、`broadcast`、`target_type`、`target_id`。\n- 历史/.log 里的 `Executing tool`、`Message sent`、`[no_qq_reply]` 只是旧内部轨迹，不是本轮发送结果；`已回复 QQ：…` 只是发送回执，不是新用户消息，不要围绕它再解释或补发同义回复；旧 assistant/user 轮都已处理过，不要因看见它们再次发送相同回复。\n- 不要发送隐藏推理、工具轨迹、原始日志或长摘要。\n"
-
-
-
-
-
-
+    "当前 QQ 会话：本轮只有当前唤醒消息（或合并批次的全部新消息）需要处理，更早的历史只辅助理解，不要逐条补回复。回复 QQ 只调 `mcp_robot_send_message` 传 `text` 或 `messages`。\n"
 )
 
 ROBOT_BACKEND_CONTEXT_PROMPT = (

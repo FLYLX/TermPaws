@@ -9,6 +9,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 from core import config, get_socket_service
@@ -512,6 +513,16 @@ class JobRunner:
             return bool(active_job and active_job.cancel_requested)
 
     def _resolve_workdir(self, user_uuid: str, item_uuid: str, working_directory: str | None) -> str:
+        # job 跟随终端实时 cwd：终端 cd 到哪，job 就跑在哪。
+        # 绝对路径原样使用——不做 item 沙箱重映射（交互终端本来就不沙箱，
+        # job 却静默 remap 成另一个目录，两边对不上就是 bug）。
+        if working_directory:
+            candidate = Path(str(working_directory).replace("\\", "/").strip()).resolve(
+                strict=False
+            )
+            if candidate.is_absolute():
+                candidate.mkdir(parents=True, exist_ok=True)
+                return str(candidate)
         try:
             return str(
                 item_path_service.resolve_workdir(

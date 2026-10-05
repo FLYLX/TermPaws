@@ -171,6 +171,7 @@ class AgentIntegration(Protocol):
         self, *, integration_id: str, item_id: str, reply_target: dict,
         sender_key: str, conversation_key: str, conversation_generation: int,
         reply_requires_awake: bool, reply_ticket_id: str, message: str,
+        pending_reply_id: str = "",
     ) -> bool: ...
 
     def clear_background_job_reply(
@@ -381,6 +382,7 @@ class NoopAgentIntegration:
         self, *, integration_id: str, item_id: str, reply_target: dict,
         sender_key: str, conversation_key: str, conversation_generation: int,
         reply_requires_awake: bool, reply_ticket_id: str, message: str,
+        pending_reply_id: str = "",
     ) -> bool:
         return False
 

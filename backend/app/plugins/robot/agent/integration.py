@@ -896,6 +896,7 @@ class RobotAgentIntegration:
         self, *, integration_id: str, item_id: str, reply_target: dict,
         sender_key: str, conversation_key: str, conversation_generation: int,
         reply_requires_awake: bool, reply_ticket_id: str, message: str,
+        pending_reply_id: str = "",
     ) -> bool:
         from app.plugins.robot.service import robot_service
 
@@ -909,6 +910,7 @@ class RobotAgentIntegration:
             reply_requires_awake=reply_requires_awake,
             reply_ticket_id=reply_ticket_id,
             message=message,
+            pending_reply_id=pending_reply_id,
         )
 
     def clear_background_job_reply(

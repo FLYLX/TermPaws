@@ -1776,6 +1776,7 @@ class LocalMCPServer:
                 reply_requires_awake=False,
                 reply_ticket_id=reply_ticket_id,
                 message=message,
+                pending_reply_id=pending_reply_id,
             )
             if not queued:
                 debug_log(

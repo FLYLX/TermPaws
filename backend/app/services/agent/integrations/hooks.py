@@ -438,6 +438,7 @@ def enqueue_integration_background_job_result(
     *, integration_id: str, item_id: str, reply_target: dict,
     sender_key: str, conversation_key: str, conversation_generation: int,
     reply_requires_awake: bool, reply_ticket_id: str, message: str,
+    pending_reply_id: str = "",
 ) -> bool:
     for integration in get_agent_integrations():
         if integration.enqueue_background_job_result(
@@ -450,6 +451,7 @@ def enqueue_integration_background_job_result(
             reply_requires_awake=reply_requires_awake,
             reply_ticket_id=reply_ticket_id,
             message=message,
+            pending_reply_id=pending_reply_id,
         ):
             return True
     return False

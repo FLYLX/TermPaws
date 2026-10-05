@@ -198,7 +198,7 @@ def test_read_chat_history_tool_returns_recent_trimmed_context(monkeypatch) -> N
 
     tool = next(tool for tool in server.list_tools() if tool["name"] == "read_chat_history")
     assert tool["skip_memory"] is True
-    assert "刚才" in tool["description"]
+    assert "context recovery" in tool["description"]
     assert "query" in tool["inputSchema"]["properties"]
 
 
@@ -291,10 +291,8 @@ def test_execute_command_only_reports_dispatch(monkeypatch) -> None:
     assert "timeout_seconds" in props
     assert "auto_interrupt_on_timeout" in props
     assert props["auto_interrupt_on_timeout"]["default"] is False
-    assert "interrupt_command" in tool["description"]
     assert "run_job" in tool["description"]
-    assert "一次只发一条命令" in tool["description"]
-    assert "默认不要拼接" in tool["inputSchema"]["properties"]["command"]["description"]
+    assert "一次只发一条" in tool["description"]
 
 def test_execute_command_sends_shell_like_input_to_active_console(
     monkeypatch,
@@ -410,22 +408,11 @@ def test_system_prompt_forbids_claiming_command_success_without_confirmation() -
     skill_loader.reload()
     prompt = get_system_prompt()
 
-    assert "不代表命令执行成功" in prompt
-    assert "命令已发送，等待终端结果确认" in prompt
-    assert "终端防卡死规则" in prompt
-    assert "终端打开不等于 shell 空闲" in prompt
-    assert "不要为了试探是否可输入而连续发送" in prompt
-    assert "不要拼接 shell 命令" in prompt
-    assert "先判断命令性质，再选择工具" in prompt
-    assert "Minecraft/Forge/Paper/Fabric/类 Minecraft 服务端启动" in prompt
-    assert "必须放在主终端前台运行" in prompt
-    assert "mcp_local_add_terminal_input_filter_rule" in prompt
-    assert "mcp_local_list_terminal_input_filter_rules" in prompt
-    assert "mcp_local_delete_terminal_input_filter_rule" in prompt
-    assert "mcp_local_clear_terminal_input_filter_rules" in prompt
-    assert "`&&`" in prompt
-    assert "mcp_local_interrupt_command" in prompt
-    assert "mcp_local_run_job" in prompt
+    assert "不代表成功" in prompt
+    assert "没有新证据不要断言结果" in prompt
+    assert "run_job" in prompt
+    assert "execute_command" in prompt
+
 
 
 def test_execute_command_reports_disconnected_without_handler(monkeypatch) -> None:
@@ -740,7 +727,7 @@ def test_run_job_is_always_asynchronous_even_when_wait_requested(monkeypatch) ->
         server,
         "_get_item_daemon_context",
         lambda item_id: (
-            SimpleNamespace(owner_id="user-1", working_directory="/workspace/item"),
+            SimpleNamespace(owner_id="user-1", working_directory="/workspace/item", title="Test Item"),
             connection,
         ),
     )
@@ -769,10 +756,11 @@ def test_run_job_is_always_asynchronous_even_when_wait_requested(monkeypatch) ->
         "item_uuid": "item-1",
         "user_uuid": "user-1",
         "command": "bun install",
-        "working_directory": "/workspace/item",
-        "timeout_seconds": 12,
-        "tail_lines": 5,
-    }
+            "working_directory": "/workspace/item",
+            "timeout_seconds": 12,
+            "tail_lines": 5,
+            "item_title": "Test Item",
+        }
     run_job_tool = next(tool for tool in server.list_tools() if tool["name"] == "run_job")
     assert "wait_for_completion" not in run_job_tool["inputSchema"]["properties"]
 
@@ -784,10 +772,9 @@ def test_tool_descriptions_guide_foreground_background_command_choice() -> None:
     run_job_tool = next(tool for tool in server.list_tools() if tool["name"] == "run_job")
 
     assert "run_job" in execute_tool["description"]
-    assert "interrupt_command" in execute_tool["description"]
-    assert "stdin closed" in run_job_tool["description"]
-    assert "execute_command" in run_job_tool["description"]
-    assert "Fire-and-forget" in run_job_tool["description"]
+    assert "后台" in run_job_tool["description"]
+    assert "cancel_job" in run_job_tool["description"]
+    assert "timeout_seconds" in run_job_tool["description"]
 
 
 def test_run_job_defaults_to_background_and_notifies_session(monkeypatch) -> None:
@@ -832,7 +819,7 @@ def test_run_job_defaults_to_background_and_notifies_session(monkeypatch) -> Non
         server,
         "_get_item_daemon_context",
         lambda item_id: (
-            SimpleNamespace(owner_id="user-1", working_directory="/workspace/item"),
+            SimpleNamespace(owner_id="user-1", working_directory="/workspace/item", title="Test Item"),
             FakeConnection(),
         ),
     )
@@ -927,7 +914,7 @@ def test_background_run_job_queues_robot_completion(monkeypatch) -> None:
         server,
         "_get_item_daemon_context",
         lambda item_id: (
-            SimpleNamespace(owner_id="user-1", working_directory="/workspace/item"),
+            SimpleNamespace(owner_id="user-1", working_directory="/workspace/item", title="Test Item"),
             FakeConnection(),
         ),
     )
@@ -1031,7 +1018,7 @@ def test_background_run_job_queues_robot_result_instead_of_direct_raw_reply(
         server,
         "_get_item_daemon_context",
         lambda item_id: (
-            SimpleNamespace(owner_id="user-1", working_directory="/workspace/item"),
+            SimpleNamespace(owner_id="user-1", working_directory="/workspace/item", title="Test Item"),
             FakeConnection(),
         ),
     )
@@ -1097,8 +1084,8 @@ def test_background_run_job_queues_robot_result_instead_of_direct_raw_reply(
     assert len(queued_results) == 1
     assert queued_results[0]["robot_id"] == "00000000-0000-0000-0000-000000000001"
     assert queued_results[0]["conversation_key"] == "private:2537134688"
-    assert queued_results[0]["pending_reply_id"] == "pending-ticket-1"
-    assert "Background terminal job result" in queued_results[0]["message"]
+    assert queued_results[0]["reply_ticket_id"] == ticket.ticket_id
+    assert "后台终端任务结果" in queued_results[0]["message"]
     assert "apt-get install -y temurin-17-jdk" in queued_results[0]["message"]
     assert "temurin installed" in queued_results[0]["message"]
 
@@ -1164,7 +1151,7 @@ def test_background_run_job_passes_web_reply_ticket_to_terminal_feedback(
         server,
         "_get_item_daemon_context",
         lambda item_id: (
-            SimpleNamespace(owner_id="user-1", working_directory="/workspace/item"),
+            SimpleNamespace(owner_id="user-1", working_directory="/workspace/item", title="Test Item"),
             FakeConnection(),
         ),
     )
@@ -1280,7 +1267,7 @@ def test_list_jobs_reports_active_daemon_jobs(monkeypatch) -> None:
         server,
         "_get_item_daemon_context",
         lambda item_id: (
-            SimpleNamespace(owner_id="user-1", working_directory="/workspace/item"),
+            SimpleNamespace(owner_id="user-1", working_directory="/workspace/item", title="Test Item"),
             FakeConnection(),
         ),
     )
@@ -1310,7 +1297,7 @@ def test_cancel_job_tool_cancels_selected_daemon_job(monkeypatch) -> None:
         server,
         "_get_item_daemon_context",
         lambda item_id: (
-            SimpleNamespace(owner_id="user-1", working_directory="/workspace/item"),
+            SimpleNamespace(owner_id="user-1", working_directory="/workspace/item", title="Test Item"),
             FakeConnection(),
         ),
     )
@@ -1378,7 +1365,7 @@ def test_run_job_allows_distinct_background_jobs_but_blocks_duplicates(monkeypat
         server,
         "_get_item_daemon_context",
         lambda item_id: (
-            SimpleNamespace(owner_id="user-1", working_directory="/workspace/item"),
+            SimpleNamespace(owner_id="user-1", working_directory="/workspace/item", title="Test Item"),
             FakeConnection(),
         ),
     )
@@ -1417,7 +1404,9 @@ def test_run_job_allows_distinct_background_jobs_but_blocks_duplicates(monkeypat
     assert first_result[0]["type"] == "text"
     assert duplicate_result[0]["type"] == "text"
     assert second_result[0]["type"] == "text"
-    assert commands.count("curl https://example.test/file -o file") == 1
+    # duplicates are no longer blocked; the agent sees a running-jobs hint instead
+    assert commands.count("curl https://example.test/file -o file") == 2
+    assert "后台任务" in duplicate_result[0]["text"]
     assert "python -m pip install demo-package" in commands
 
 
@@ -1439,7 +1428,7 @@ def test_interrupt_command_cancels_running_daemon_job(monkeypatch) -> None:
         server,
         "_get_item_daemon_context",
         lambda item_id: (
-            SimpleNamespace(owner_id="user-1", working_directory="/workspace/item"),
+            SimpleNamespace(owner_id="user-1", working_directory="/workspace/item", title="Test Item"),
             FakeConnection(),
         ),
     )
@@ -1464,8 +1453,8 @@ def test_run_job_tool_is_registered_for_long_jobs() -> None:
     server = LocalMCPServer()
     tool = next(tool for tool in server.list_tools() if tool["name"] == "run_job")
 
-    assert "Fire-and-forget" in tool["description"]
-    assert tool["inputSchema"]["properties"]["timeout_seconds"]["default"] == 600
+    assert "后台一次性命令" in tool["description"]
+    assert tool["inputSchema"]["properties"]["timeout_seconds"]["default"] == 1200
     assert tool["skip_memory"] is True
 
 

@@ -1910,6 +1910,8 @@ class LocalMCPServer:
             f"后台任务已{status}。\n"
             f"{instruction_line}"
             f"{request_boundary}"
+            "汇报前先看最近几轮对话：如果用户刚被回答过同样内容（哪怕措辞不同），"
+            "就不要再发一遍——只简短确认或最终输出 NRN。\n"
             f"命令: {command}\n"
             f"{self._format_job_result(result)}"
         )

@@ -7,7 +7,7 @@ def test_robot_reply_event_content_formats_sent_text() -> None:
             {"text": "你好\n主人"},
             "Message sent to current robot conversation.",
         )
-        == "已回复 QQ：你好主人"
+        == "已回复 QQ：你好 主人"
     )
 
 

@@ -149,9 +149,9 @@ def test_robot_mcp_send_message_resends_identical_text(monkeypatch) -> None:
     finally:
         unregister_robot_mcp_context(token)
 
-    assert first[0]["text"].startswith("Message sent to current robot conversation.")
+    assert first[0]["text"].startswith("已送达用户")
     # 同一内容 30s 内的第二次发送被抑制（流控，防模型连续重复发）
-    assert second[0]["text"].startswith("Message sent to current robot conversation.")
+    assert second[0]["text"].startswith("已送达用户")
     assert sent == ["同一个回复"]
 
 
@@ -196,7 +196,7 @@ def test_robot_mcp_send_failure_allows_retry(monkeypatch) -> None:
         unregister_robot_mcp_context(token)
 
     assert first[0]["text"] == "Error: bridge down"
-    assert second[0]["text"].startswith("Message sent to current robot conversation.")
+    assert second[0]["text"].startswith("已送达用户")
     assert sent == ["失败后重试"]
 
 
@@ -693,7 +693,7 @@ def test_robot_mcp_send_message_uses_registered_context(monkeypatch) -> None:
     finally:
         unregister_robot_mcp_context(token)
 
-    assert result[0]["text"].startswith("Message sent to current robot conversation.")
+    assert result[0]["text"].startswith("已送达用户")
     assert sent["robot_id"] == "robot-1"
     assert sent["text"] == "notify user"
     assert isinstance(sent["reply_target"], RobotReplyTarget)
@@ -731,7 +731,7 @@ def test_robot_mcp_send_message_allows_up_to_three_bubbles(monkeypatch) -> None:
     finally:
         unregister_robot_mcp_context(token)
 
-    assert result[0]["text"].startswith("Message sent to current robot conversation.")
+    assert result[0]["text"].startswith("已送达用户")
     assert sent == ["I am here.", "What do you need?"]
 
 
@@ -769,7 +769,7 @@ def test_robot_mcp_send_message_keeps_multi_sender_batch_bubbles(monkeypatch) ->
     finally:
         unregister_robot_mcp_context(token)
 
-    assert result[0]["text"].startswith("Message sent to current robot conversation.")
+    assert result[0]["text"].startswith("已送达用户")
     assert sent == ["Alice: first answer", "Bob: second answer"]
 
 
@@ -1654,7 +1654,7 @@ def test_robot_mcp_send_message_prefers_active_context_over_ambiguous_history(
     finally:
         unregister_robot_mcp_context(token)
 
-    assert result[0]["text"].startswith("Message sent to current robot conversation.")
+    assert result[0]["text"].startswith("已送达用户")
     assert sent["robot_id"] == "robot-current"
     assert sent["text"] == "reply current chat"
     assert isinstance(sent["reply_target"], RobotReplyTarget)
@@ -1908,7 +1908,7 @@ def test_robot_mcp_ignores_partial_target_in_active_robot_turn(
     finally:
         unregister_robot_mcp_context(token)
 
-    assert result[0]["text"].startswith("Message sent to current robot conversation.")
+    assert result[0]["text"].startswith("已送达用户")
     assert len(sent) == 1
     assert sent[0][0] == "robot-current"
     assert sent[0][1].target_id == "current-group"

@@ -1,7 +1,7 @@
 from app.plugins.robot.explicit_target_backfill import (
     extract_explicit_qq_targets,
 )
-from app.services.agent.mcp.robot_server import RobotMCPServer
+from app.plugins.robot.mcp.server import RobotMCPServer
 
 
 def test_extract_multiple_explicit_targets() -> None:

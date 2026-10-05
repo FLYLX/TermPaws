@@ -2648,7 +2648,12 @@ class RobotMCPServer:
                 messages,
             )
             self._remember_sent_messages(attempted_robot_id, attempted_target, sent_messages, args=args)
-            result_text = "Message sent to current robot conversation."
+            delivered = "；".join(m[:30] for m in sent_messages[:3])
+            result_text = (
+                f"已送达用户：{delivered}。"
+                "这条用户已经收到了，不要再发一遍同样的内容；"
+                "下一步该干什么干什么，别重复汇报同一件事。"
+            )
             form_note = self._bubble_form_feedback(messages)
             if form_note:
                 result_text += f"\n{form_note}"

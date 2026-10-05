@@ -1,6 +1,6 @@
 [project]
 name = "termpaws-frontend"
-version = "0.9.5"
+version = "0.9.6"
 description = "TermPaws web frontend (static assets)"
 requires-python = ">=3.10"
 

@@ -1121,6 +1121,7 @@ def _generate_stream_unserialized(
     pending_async_delivery = False
     thinking_only_retry_used = False
     plan_continuation_count = 0
+    robot_final_text_retry_used = False
     from app.core.config import settings as chat_settings
 
     turn_started_at = time.monotonic()
@@ -1414,6 +1415,35 @@ def _generate_stream_unserialized(
                     called_tool_sequence,
                 )
                 if delivery_tool_sent_by_integration or qq_message_sent_this_turn:
+                    # QQ 轮次里发送工具是唯一出口，最终文本不会送达。
+                    # 模型把没说完的内容写进最终文本时（常见于长故事/长列表
+                    # 逐条气泡发送的中途收尾），纠偏一次让它用工具发完，
+                    # 而不是静默丢弃——这是长回复"讲一半断了"的主因。
+                    try:
+                        from app.plugins.robot.reply_intent import is_no_reply_intent
+                    except Exception:
+                        is_no_reply_intent = None
+                    if (
+                        not robot_final_text_retry_used
+                        and not finalization_only
+                        and final_response.strip()
+                        and is_no_reply_intent is not None
+                        and not is_no_reply_intent(final_response)
+                    ):
+                        robot_final_text_retry_used = True
+                        messages.append({"role": "assistant", "content": iteration_content})
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": (
+                                    "你上一条文本不会送达用户——QQ 回复的唯一出口是 "
+                                    "mcp_robot_send_message。如果那是你还没说完的内容，"
+                                    "现在用发送工具把它发出去（一条气泡一次调用，发完为止）；"
+                                    "如果确实已经全部说完了，只返回 [no_qq_reply]。"
+                                ),
+                            }
+                        )
+                        continue
                     logger.info(
                         "[Chat] Suppressed final response after source delivery tool sent for item %s",
                         item_id,

@@ -2371,6 +2371,7 @@ class AgentSession:
             self._current_turn_id = turn_guard.turn_id
             self._emit_running_terminal_status(analysis.terminal_source)
             terminal_delivery_retry_used = False
+            robot_final_text_retry_used = False
             integration_tool_results: list[str] = []
             terminal_failure_report = ""
             terminal_failure_silent = False
@@ -2433,6 +2434,29 @@ class AgentSession:
                         reply_ticket = self._get_reply_ticket(
                             input_msg.reply_ticket_id
                         )
+                        if (
+                            not robot_final_text_retry_used
+                            and str(getattr(agent, "robot_context_token", "") or "").strip()
+                            and final_content.strip()
+                            and not is_terminal_no_reply_intent(final_content)
+                        ):
+                            # QQ 轮次里唯一出口是发送工具：最终文本不会送达。
+                            # 模型把没说的内容写进最终文本时，纠偏让它用工具发完，
+                            # 而不是默默丢弃（故事/长内容讲到一半被砍的主因）。
+                            messages.append({"role": "assistant", "content": final_content})
+                            messages.append(
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        "[系统] 你上一条文本不会送达用户——QQ 回复的唯一出口是 "
+                                        "mcp_robot_send_message。如果那是你还没说完的内容，"
+                                        "现在用发送工具把它发出去（一条气泡一次调用，发完为止）；"
+                                        "如果确实已经全部说完了，只返回 [no_qq_reply]。"
+                                    ),
+                                }
+                            )
+                            robot_final_text_retry_used = True
+                            continue
                         if should_retry_terminal_source_delivery(
                             agent=agent,
                             terminal_content=analysis.content,
@@ -2676,6 +2700,7 @@ class AgentSession:
             turn_final_content = ""
             turn_completed = False
             plan_continuation_count = 0
+            chat_robot_retry_used = False
             for _ in range(MAX_ITERATIONS):
                 from app.services.agent.reply_ticket import reply_ticket_manager as _rtm
 
@@ -2736,7 +2761,40 @@ class AgentSession:
                             }
                         )
                         continue
+                    if (
+                        not chat_robot_retry_used
+                        and str(getattr(agent, "robot_context_token", "") or "").strip()
+                        and (message.content or "").strip()
+                        and not is_terminal_no_reply_intent(message.content or "")
+                    ):
+                        logger.info(
+                            "[AgentSession] Robot final-text correction fired: item=%s",
+                            self.item_id,
+                        )
+                        # QQ 轮次里唯一出口是发送工具：最终文本不会送达。
+                        # 模型把没说完的内容写进最终文本时，纠偏让它用工具发完，
+                        # 而不是默默丢弃（故事/长内容讲到一半被砍的主因）。
+                        messages.append({"role": "assistant", "content": message.content or ""})
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "[系统] 你上一条文本不会送达用户——QQ 回复的唯一出口是 "
+                                    "mcp_robot_send_message。如果那是你还没说完的内容，"
+                                    "现在用发送工具把它发出去（一条气泡一次调用，发完为止）；"
+                                    "如果确实已经全部说完了，只返回 [no_qq_reply]。"
+                                ),
+                            }
+                        )
+                        chat_robot_retry_used = True
+                        continue
                     if message.content:
+                        logger.info(
+                            "[AgentSession] Chat turn final text (no correction): item=%s retry_used=%s token=%s",
+                            self.item_id,
+                            chat_robot_retry_used,
+                            bool(str(getattr(agent, "robot_context_token", "") or "").strip()),
+                        )
                         final_content = strip_think_tags(guard_fabricated_tool_trace(message.content))
                         turn_final_content = final_content
                         self.emit_output(

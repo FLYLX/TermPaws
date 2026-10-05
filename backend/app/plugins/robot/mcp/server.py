@@ -57,6 +57,27 @@ class RobotMCPServer:
     _delivered_targets_lock = threading.Lock()
     # delivery key -> (last update time, {(target_type, target_id): last sent text})
     _delivered_targets: dict[str, tuple[datetime, dict[tuple[str, str], str]]] = {}
+    _turn_send_counts_lock = threading.Lock()
+    # reply ticket -> (last update time, bubbles sent this turn)
+    _turn_send_counts: dict[str, tuple[datetime, int]] = {}
+
+    @classmethod
+    def _bump_turn_send_count(cls, ticket_id: str, count: int) -> int:
+        if not ticket_id:
+            return count
+        now = datetime.now()
+        with cls._turn_send_counts_lock:
+            stale = [
+                key
+                for key, (updated_at, _) in cls._turn_send_counts.items()
+                if (now - updated_at).total_seconds() > 1800
+            ]
+            for key in stale:
+                cls._turn_send_counts.pop(key, None)
+            _updated, total = cls._turn_send_counts.get(ticket_id, (now, 0))
+            total += count
+            cls._turn_send_counts[ticket_id] = (now, total)
+            return total
 
     def __init__(self) -> None:
         self._tools: dict[str, dict] = {}
@@ -2649,11 +2670,14 @@ class RobotMCPServer:
             )
             self._remember_sent_messages(attempted_robot_id, attempted_target, sent_messages, args=args)
             bubble_count = len(sent_messages)
+            turn_total = self._bump_turn_send_count(
+                str(args.get("_reply_ticket_id") or ""), bubble_count
+            )
             result_text = (
-                f"已送达用户：共 {bubble_count} 条气泡，全部完整送达（无截断、无丢失）。"
+                f"已送达用户：本次 {bubble_count} 条气泡完整送达（本轮累计 {turn_total} 条）。"
                 "不要重复发送已发内容；"
-                "如果话还没说完（比如故事讲到一半、列表没列完），"
-                "继续调用本工具发后续内容；全部说完了再结束本轮。"
+                "如果话还没说完（比如故事讲到一半、列表没列完），继续调用本工具发下一条；"
+                "内容真正讲完才能结束本轮——提前收尾等于把话说到一半扔下用户。"
             )
             form_note = self._bubble_form_feedback(messages)
             if form_note:

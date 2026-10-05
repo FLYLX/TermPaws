@@ -1247,7 +1247,7 @@ class RobotMCPServer:
     @staticmethod
     def _sanitize_outgoing_messages(raw_messages: list[str]) -> list[str]:
         messages: list[str] = []
-        for raw_message in raw_messages[:5]:
+        for raw_message in raw_messages:
             text = compact_robot_visible_message_text(
                 sanitize_robot_visible_text(raw_message)
             )
@@ -2648,11 +2648,12 @@ class RobotMCPServer:
                 messages,
             )
             self._remember_sent_messages(attempted_robot_id, attempted_target, sent_messages, args=args)
-            delivered = "；".join(m[:30] for m in sent_messages[:3])
+            bubble_count = len(sent_messages)
             result_text = (
-                f"已送达用户：{delivered}。"
-                "这条用户已经收到了，不要再发一遍同样的内容；"
-                "下一步该干什么干什么，别重复汇报同一件事。"
+                f"已送达用户：共 {bubble_count} 条气泡，全部完整送达（无截断、无丢失）。"
+                "不要重复发送已发内容；"
+                "如果话还没说完（比如故事讲到一半、列表没列完），"
+                "继续调用本工具发后续内容；全部说完了再结束本轮。"
             )
             form_note = self._bubble_form_feedback(messages)
             if form_note:

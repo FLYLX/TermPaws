@@ -3552,6 +3552,18 @@ class RobotService:
             )
             return
 
+        if self._conversation_has_pending_job_reply(conversation_key):
+            # 这轮没说话是因为刚开了后台任务（结果回调在路上）。
+            # 任务在跑期间会话不算睡着——用户追问"好了吗"应该能到达，
+            # 清窗/休眠会让这些消息直接被 inbound 门丢掉。
+            self._remember_reply_context_window_for_key(
+                robot,
+                conversation_key,
+                metadata=reply_target.metadata,
+                expected_generation=conversation_generation,
+            )
+            return
+
         if sleep_when_no_reply:
             self.sleep_conversation_controller(
                 robot.id,
@@ -3566,6 +3578,17 @@ class RobotService:
             reason="agent_did_not_send_qq_message",
             expected_generation=conversation_generation,
         )
+
+    def _conversation_has_pending_job_reply(self, conversation_key: str) -> bool:
+        """该会话是否登记了尚未送达的后台任务回调（任务在跑，结果在路上）。"""
+        if not conversation_key:
+            return False
+        with self._lock:
+            for _key, entries in self._pending_task_replies.items():
+                _robot_id, entry_conversation = _key
+                if entry_conversation == conversation_key and entries:
+                    return True
+        return False
 
     def _session_has_running_terminal_jobs(self, item_id: str) -> bool:
         """In-process check for running terminal jobs (no daemon round-trip).

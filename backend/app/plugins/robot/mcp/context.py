@@ -407,6 +407,41 @@ def register_robot_mcp_context(context: RobotMCPContext) -> str:
     return token
 
 
+def get_or_register_context_for_ticket(ticket: Any) -> str:
+    """Reply tickets carry the full robot context (robot_id, sender_key,
+    reply_target, conversation_key). Register a deterministic context per
+    ticket so tool-arg injection works no matter which thread executes the
+    tool call (dispatch workers spawn per-call threads for async tools)."""
+    ticket_id = str(getattr(ticket, "ticket_id", "") or "").strip()
+    robot_id = str(getattr(ticket, "robot_id", "") or "").strip()
+    reply_target = getattr(ticket, "reply_target", None)
+    if not ticket_id or not robot_id or reply_target is None:
+        return ""
+    try:
+        from app.plugins.robot.contracts import RobotReplyTarget
+
+        target = (
+            reply_target
+            if isinstance(reply_target, RobotReplyTarget)
+            else RobotReplyTarget.model_validate(reply_target)
+        )
+    except Exception:
+        return ""
+    key = f"ticket:{ticket_id}"
+    context = RobotMCPContext(
+        robot_id=robot_id,
+        sender_key=str(getattr(ticket, "sender_key", "") or ""),
+        reply_target=target.model_copy(deep=True),
+        conversation_key=str(getattr(ticket, "conversation_key", "") or ""),
+        conversation_generation=int(getattr(ticket, "conversation_generation", 0) or 0),
+        reply_requires_awake=False,
+        request_message=str(getattr(ticket, "request_message", "") or ""),
+    )
+    with _lock:
+        _contexts[key] = context
+    return key
+
+
 def get_robot_mcp_context(token: str) -> RobotMCPContext | None:
     if not token:
         return None

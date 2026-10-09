@@ -443,18 +443,20 @@ class Agent:
         if server_name not in self._mcp_servers:
             return {"success": False, "error": f"MCP server '{server_name}' not available for this agent"}
 
+        if (
+            self._context
+            and self._context.reply_ticket_id
+            and "_reply_ticket_id" not in args
+        ):
+            # 先注入票据：集成层的机器人上下文兜底依赖它（票据自带会话信息，
+            # 跨线程可见；agent 上的回合状态是线程隔离的，可能读不到）。
+            args["_reply_ticket_id"] = self._context.reply_ticket_id
         inject_integration_tool_args(
             self,
             server_name=server_name,
             tool_name=actual_tool_name,
             args=args,
         )
-        if (
-            self._context
-            and self._context.reply_ticket_id
-            and "_reply_ticket_id" not in args
-        ):
-            args["_reply_ticket_id"] = self._context.reply_ticket_id
 
         for tool in self._mcp_tools:
             if tool.get("function", {}).get("name") == tool_name:

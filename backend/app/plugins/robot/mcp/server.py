@@ -436,21 +436,80 @@ class RobotMCPServer:
             skip_memory=True,
         )
 
-    # robot_id -> (fetched_at, {(target_type, target_id), ...}); targets the
-    # platform itself confirmed this account belongs to. Seeing is owning:
-    # anything in the live contact list is a legitimate send destination.
+    # robot_id -> (fetched_at, {(target_type, target_id), ...}, names);
+    # targets the platform itself confirmed this account belongs to.
+    # Seeing is owning: anything in the live contact list is a legitimate
+    # send destination. Names feed the per-turn roster line so the agent
+    # always knows which conversation an id belongs to without a tool call.
     _verified_contacts_lock = threading.Lock()
-    _verified_contacts: dict[str, tuple[datetime, set[tuple[str, str]]]] = {}
+    _verified_contacts: dict[
+        str, tuple[datetime, set[tuple[str, str]], dict[tuple[str, str], str]]
+    ] = {}
     _VERIFIED_CONTACTS_TTL_SECONDS = 1800
 
     @classmethod
     def _remember_verified_contacts(
-        cls, robot_id: str, targets: set[tuple[str, str]]
+        cls,
+        robot_id: str,
+        targets: set[tuple[str, str]],
+        names: dict[tuple[str, str], str] | None = None,
     ) -> None:
         if not robot_id or not targets:
             return
         with cls._verified_contacts_lock:
-            cls._verified_contacts[robot_id] = (datetime.now(), set(targets))
+            cls._verified_contacts[robot_id] = (
+                datetime.now(),
+                set(targets),
+                dict(names or {}),
+            )
+
+    @classmethod
+    def roster_line(cls, robot_id: str, *, allow_fetch: bool = True) -> str:
+        """One-line "我在哪些群/有哪些好友" for the turn context card.
+
+        Served from the verified-contacts cache; on first use (or after
+        expiry) fetches the live list once via the bridge so the roster is
+        available without the agent remembering to call list_contacts.
+        """
+        robot_id = str(robot_id or "").strip()
+        if not robot_id:
+            return ""
+        with cls._verified_contacts_lock:
+            entry = cls._verified_contacts.get(robot_id)
+            fresh = bool(
+                entry
+                and (datetime.now() - entry[0]).total_seconds()
+                <= cls._VERIFIED_CONTACTS_TTL_SECONDS
+            )
+        if not fresh and allow_fetch:
+            try:
+                cls()._refresh_contacts(robot_id)
+            except Exception:
+                pass
+            with cls._verified_contacts_lock:
+                entry = cls._verified_contacts.get(robot_id)
+        if not entry:
+            return ""
+        _fetched_at, targets, names = entry
+        groups = sorted(
+            (t for t in targets if t[0] == "group"),
+            key=lambda t: names.get(t, ""),
+        )
+        privates = sorted(
+            (t for t in targets if t[0] == "private"),
+            key=lambda t: names.get(t, ""),
+        )
+        parts = []
+        if groups:
+            parts.append(
+                "群: " + ", ".join(f"{names.get(t, '')}({t[1]})" for t in groups)
+            )
+        if privates:
+            parts.append(
+                "私聊: "
+                + ", ".join(f"{names.get(t, '')}({t[1]})" for t in privates[:10])
+            )
+        return "; ".join(parts)
 
     @classmethod
     def _is_verified_contact(
@@ -468,15 +527,9 @@ class RobotMCPServer:
                 return False
             return (target_type, target_id) in targets
 
-    def _list_contacts(self, args: dict) -> list[dict[str, str]]:
-        context_token = str(args.get("_robot_context_token") or "").strip()
-        context = get_robot_mcp_context(context_token)
-        robot_id = str(getattr(context, "robot_id", "") or "").strip()
-        if not robot_id:
-            robot_id = str(args.get("_robot_id") or "").strip()
-        if not robot_id:
-            return [{"type": "text", "text": "Error: robot context unavailable"}]
-
+    def _refresh_contacts(
+        self, robot_id: str
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
         from app.plugins.robot.bridge_client import robot_bridge_client
 
         groups: list[dict[str, Any]] = []
@@ -500,6 +553,33 @@ class RobotMCPServer:
             errors.append(f"get_friend_list: {exc}")
 
         verified: set[tuple[str, str]] = set()
+        names: dict[tuple[str, str], str] = {}
+        for group in groups:
+            group_id = str(group.get("group_id") or "").strip()
+            if group_id:
+                verified.add(("group", group_id))
+                names[("group", group_id)] = str(group.get("group_name") or "").strip()
+        for friend in friends:
+            user_id = str(friend.get("user_id") or "").strip()
+            if user_id:
+                verified.add(("private", user_id))
+                names[("private", user_id)] = str(
+                    friend.get("nickname") or friend.get("remark") or ""
+                ).strip()
+        if verified:
+            self._remember_verified_contacts(robot_id, verified, names)
+        return groups, friends, errors
+
+    def _list_contacts(self, args: dict) -> list[dict[str, str]]:
+        context_token = str(args.get("_robot_context_token") or "").strip()
+        context = get_robot_mcp_context(context_token)
+        robot_id = str(getattr(context, "robot_id", "") or "").strip()
+        if not robot_id:
+            robot_id = str(args.get("_robot_id") or "").strip()
+        if not robot_id:
+            return [{"type": "text", "text": "Error: robot context unavailable"}]
+
+        groups, friends, errors = self._refresh_contacts(robot_id)
         lines: list[str] = []
         if groups:
             lines.append(f"我所在的群（{len(groups)} 个）：")
@@ -508,7 +588,6 @@ class RobotMCPServer:
                 name = str(group.get("group_name") or "").strip() or "( unnamed )"
                 if not group_id:
                     continue
-                verified.add(("group", group_id))
                 member_count = group.get("member_count")
                 count_note = f"，{member_count} 人" if member_count else ""
                 lines.append(f"- {name}（群号 {group_id}{count_note}）")
@@ -521,13 +600,11 @@ class RobotMCPServer:
                 ).strip() or "( unnamed )"
                 if not user_id:
                     continue
-                verified.add(("private", user_id))
                 lines.append(f"- {name}（QQ {user_id}）")
         if not lines:
             detail = "; ".join(errors) if errors else "empty list"
             return [{"type": "text", "text": f"没拿到联系人列表：{detail}"}]
 
-        self._remember_verified_contacts(robot_id, verified)
         lines.append("")
         lines.append(
             "以上都是这个账号真实所在的会话。注意：不带 target 的 send_message "

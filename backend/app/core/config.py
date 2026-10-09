@@ -99,7 +99,7 @@ class Settings(BaseSettings):
     ROBOT_BRIDGE_PORT: int = 7000
     ROBOT_BACKEND_DISPATCH_TIMEOUT_SECONDS: float = 180.0
     ROBOT_BACKEND_DISPATCH_QUEUE_SIZE: int = 50
-    ROBOT_BACKEND_DISPATCH_WORKERS: int = 1
+    ROBOT_BACKEND_DISPATCH_WORKERS: int = 4
     ROBOT_BACKEND_JOB_TIMEOUT_SECONDS: float = 240.0
     # 单次 LLM 调用超时（连接+流式读取共用）：中继卡顿按此快速失败，
     # 避免一次卡顿吃掉整个轮次预算。可用环境变量覆盖。

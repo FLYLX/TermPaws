@@ -368,9 +368,13 @@ async def collect_chat_response(
         prepared_agent = await prepare_chat_agent(session, item_id, current_user)
         handler = prepared_agent[0]
         handler_id = str(getattr(handler, "id", "") or handler.name)
-    lease = await agent_turn_coordinator.acquire_async(
-        agent_turn_key(handler_id)
-    )
+    # 并发单元是会话，不是 handler：QQ 各群/私聊的回合互不阻塞，
+    # 同一会话内保持串行（时序正确性）。回合级 robot 状态是线程隔离的
+    # （AgentContext._robot_turn_state），并行回合结构上互不干扰。
+    lease_key = agent_turn_key(handler_id)
+    if robot_conversation_key:
+        lease_key = f"{lease_key}:qq:{robot_conversation_key}"
+    lease = await agent_turn_coordinator.acquire_async(lease_key)
     try:
         return await _collect_chat_response_unserialized(
             session=session,

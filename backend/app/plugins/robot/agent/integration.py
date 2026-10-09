@@ -409,10 +409,21 @@ class RobotAgentIntegration:
         agent_context.robot_sender_key = sender_key
         agent_context.robot_conversation_key = conversation_key
         agent_context.robot_context_token = register_robot_mcp_context(mcp_context)
-        agent_context.robot_reply_context_summary = build_robot_reply_context_summary(
+        reply_context_summary = build_robot_reply_context_summary(
             reply_target,
             sender_key,
         )
+        try:
+            from app.plugins.robot.mcp.server import robot_mcp_server
+
+            roster = robot_mcp_server.roster_line(robot_id)
+        except Exception:
+            roster = ""
+        if roster:
+            # 渐进披露的一级：一行花名册让 agent 每轮都知道“我在哪些群/
+            # 有哪些好友”，细节由 list_contacts 按需展开。
+            reply_context_summary += f"\n- my conversations (sendable): {roster}"
+        agent_context.robot_reply_context_summary = reply_context_summary
         agent_context.robot_mcp_server_transient = False
         return True
 
@@ -466,20 +477,59 @@ class RobotAgentIntegration:
         args.pop("_robot_known_targets", None)
 
         context = _robot_context(agent)
-        if context is None:
+
+        # 线程无关的兜底：派发 worker 里每个异步工具调用都跑在新线程
+        # （_run_async_from_sync），回合线程上的上下文在那里不可见。
+        # reply ticket 自带完整 robot 上下文，是随数据走的可靠载体。
+        ticket_token = ""
+        if not (context is not None and getattr(context, "robot_context_token", "")):
+            ticket_id = str(args.get("_reply_ticket_id") or "").strip()
+            if ticket_id:
+                try:
+                    from app.services.agent.reply_ticket import reply_ticket_manager
+                    from app.plugins.robot.mcp.context import (
+                        get_or_register_context_for_ticket,
+                    )
+
+                    ticket = reply_ticket_manager.get(ticket_id)
+                    if ticket is not None:
+                        ticket_token = get_or_register_context_for_ticket(ticket)
+                except Exception:
+                    ticket_token = ""
+
+        if context is None and not ticket_token:
             return
+
+        robot_id = str(getattr(context, "robot_id", "") or "") if context is not None else ""
+        context_token = (
+            str(getattr(context, "robot_context_token", "") or "")
+            if context is not None
+            else ""
+        ) or ticket_token
 
         if (
             server_name == "local"
             and tool_name in {"execute_command", "run_job"}
-            and getattr(context, "robot_id", "")
-            and getattr(context, "robot_context_token", "")
+            and (robot_id or ticket_token)
+            and context_token
         ):
-            args["_robot_context_token"] = context.robot_context_token
+            args["_robot_context_token"] = context_token
             return
 
         if server_name != ROBOT_MCP_SERVER_NAME:
             return
+
+        if context is not None and getattr(context, "current_user_id", ""):
+            args["_TermPaws_user_id"] = context.current_user_id
+            args["_TermPaws_is_superuser"] = context.current_user_is_superuser
+        if context is not None and getattr(context, "item_id", ""):
+            args["_TermPaws_item_id"] = context.item_id
+        if context is not None and getattr(context, "robot_known_targets", None):
+            args["_robot_known_targets"] = [
+                dict(target) for target in context.robot_known_targets
+            ]
+        if (robot_id or ticket_token) and context_token:
+            args["_robot_context_token"] = context_token
 
         if getattr(context, "current_user_id", ""):
             args["_TermPaws_user_id"] = context.current_user_id

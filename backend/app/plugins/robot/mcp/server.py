@@ -530,8 +530,9 @@ class RobotMCPServer:
         self._remember_verified_contacts(robot_id, verified)
         lines.append("")
         lines.append(
-            "以上都是这个账号真实所在的会话。要联系其中任何一个，"
-            "send_message 传 target_type（group/private）+ target_id（群号/QQ号）即可。"
+            "以上都是这个账号真实所在的会话。注意：不带 target 的 send_message "
+            "永远发回当前对话；要给上面列表里的其他群/好友发消息，那次调用必须显式带上 "
+            "target_type（group/private）+ target_id（群号/QQ号），否则内容再对也会发错地方。"
             "每个群的“性格”从它的聊天内容里感受，列表只回答“我在哪”。"
         )
         if errors:

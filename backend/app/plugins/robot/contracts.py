@@ -47,3 +47,15 @@ class RobotBridgeSendRequest(BaseModel):
 class RobotBridgeReloadResponse(BaseModel):
     success: bool
     detail: str
+
+
+class RobotBridgeCallApiRequest(BaseModel):
+    robot_id: uuid.UUID
+    action: str
+    params: dict = Field(default_factory=dict)
+
+
+class RobotBridgeCallApiResponse(BaseModel):
+    success: bool
+    data: Any = None
+    error: str | None = None

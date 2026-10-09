@@ -992,6 +992,10 @@ class AgentSession:
                 return
             self._running_terminal_job = None
 
+    def get_recent_finished_jobs(self) -> list[dict[str, Any]]:
+        with self.lock:
+            return list(self._recent_finished_jobs)
+
     def record_finished_job(
         self,
         command: str,

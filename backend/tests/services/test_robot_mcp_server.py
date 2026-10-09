@@ -1440,7 +1440,7 @@ def test_robot_mcp_reads_registered_context_conversation_memory(
     assert "hello current keyword" in result[0]["text"]
     assert "assistant current reply" not in result[0]["text"]
     assert "other keyword" not in result[0]["text"]
-    assert "active QQ-triggered context is locked to group:current-group" in blocked[0]["text"]
+    assert "target not recognized in this turn" in blocked[0]["text"]
 
 
 def test_robot_mcp_read_memory_active_context_caps_requested_lines(
@@ -1717,7 +1717,7 @@ def test_robot_mcp_blocks_reply_to_other_context_from_active_robot_turn(
         unregister_robot_mcp_context(token)
 
     assert result[0]["type"] == "text"
-    assert "active QQ-triggered context is locked to group:current-group" in result[0]["text"]
+    assert "target not recognized in this turn" in result[0]["text"]
     assert sent == []
 
 
@@ -1761,7 +1761,7 @@ def test_robot_mcp_blocks_explicit_other_target_from_active_robot_turn(
         unregister_robot_mcp_context(token)
 
     assert result[0]["type"] == "text"
-    assert "active QQ-triggered context is locked to group:current-group" in result[0]["text"]
+    assert "target not recognized in this turn" in result[0]["text"]
     assert sent == []
 
 
@@ -1811,7 +1811,7 @@ def test_robot_mcp_blocks_broadcast_from_active_robot_turn(monkeypatch) -> None:
         unregister_robot_mcp_context(token)
 
     assert result[0]["type"] == "text"
-    assert "active QQ-triggered context is locked to private:654321" in result[0]["text"]
+    assert "target not recognized in this turn" in result[0]["text"]
     assert sent == []
 
 
@@ -2327,5 +2327,5 @@ def test_robot_mcp_send_message_targets_blocked_in_active_context(monkeypatch) -
     finally:
         unregister_robot_mcp_context(token)
 
-    assert "active QQ-triggered context is locked to group:current-group" in result[0]["text"]
+    assert "target not recognized in this turn" in result[0]["text"]
     assert sent == []

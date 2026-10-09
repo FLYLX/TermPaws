@@ -107,10 +107,17 @@ def flush_background_job_results_for_entries(
         first = robot_entries[0]
         robot_ticket = first.get("reply_ticket_id") or ""
         if len(robot_entries) == 1:
+            _session = first.get("agent_session")
+            _recent = (
+                _session.get_recent_finished_jobs()
+                if _session is not None and hasattr(_session, "get_recent_finished_jobs")
+                else None
+            )
             message = server._format_background_job_robot_message(
                 first["command"],
                 first["result"],
                 reply_ticket_id=robot_ticket,
+                recent_jobs=_recent,
             )
         else:
             message = _format_background_job_results_batch(robot_entries)
@@ -1884,7 +1891,14 @@ class LocalMCPServer:
         )
         return "\n".join(lines)
 
-    def _format_background_job_robot_message(self, command: str, result: dict, *, reply_ticket_id: str = "") -> str:
+    def _format_background_job_robot_message(
+        self,
+        command: str,
+        result: dict,
+        *,
+        reply_ticket_id: str = "",
+        recent_jobs: list[dict] | None = None,
+    ) -> str:
         if result.get("cancelled"):
             return (
                 "[后台终端任务结果 - 来自 QQ 会话]\n"
@@ -1896,6 +1910,22 @@ class LocalMCPServer:
         status = "完成" if result.get("success") else "失败"
         has_plan = bool(self._plan_reminder("", reply_ticket_id))
         request_boundary = self._job_callback_task_boundary(reply_ticket_id)
+        trail = ""
+        if recent_jobs:
+            trail_lines = []
+            for job in recent_jobs[-5:]:
+                job_cmd = str(job.get("command") or "")[:80]
+                if not job_cmd or job_cmd == command[:80]:
+                    continue
+                outcome = "成功" if job.get("success") else f"失败(exit={job.get('exit_code')})"
+                trail_lines.append(f"  - {outcome}: {job_cmd}")
+            if trail_lines:
+                trail = (
+                    "本会话刚跑完的任务（同一请求的探查轨迹，结果你都已经见过）：\n"
+                    + "\n".join(trail_lines)
+                    + "\n如果这些探查都没找到目标，别再换花样起同类任务——"
+                    "如实告诉用户找不到/需要更多信息，比继续挖更有用。\n"
+                )
         if has_plan:
             instruction = (
                 "你的第一个动作必须是调用 mcp_local_update_plan，"
@@ -1917,6 +1947,7 @@ class LocalMCPServer:
             "这类自语一旦发出就是一条群消息，非常奇怪——决定不发就什么都别发，"
             "只输出 NRN。job id、命令、路径等内部细节也不要出现在群消息里。\n"
             f"命令: {command}\n"
+            f"{trail}"
             f"{self._format_job_result(result)}"
         )
 

@@ -100,8 +100,10 @@ class RobotMCPServer:
             description=(
                 "Send a QQ message through the TermPaws connector. In an incoming "
                 "QQ-triggered turn, call with only text/messages to reply to the "
-                "current conversation; target parameters are not allowed there "
-                "(cross-conversation sends are blocked). Outside an active QQ "
+                "current conversation. To proactively message another group or "
+                "friend, call list_contacts first - every contact you can see "
+                "there is unlocked for sending with target_type+target_id. "
+                "Outside an active QQ "
                 "context never infer destinations from chat history: use "
                 "target_type+target_id only for explicit user-provided group/QQ "
                 "numbers, or reply_to for a backend web chat conversation visibly "
@@ -414,6 +416,127 @@ class RobotMCPServer:
             handler=self._sleep_conversation,
             skip_memory=True,
         )
+        self.register_tool(
+            name="list_contacts",
+            description=(
+                "List the groups and friends this QQ account is actually in "
+                "(live from the platform), with names and ids. Use it to find "
+                "the right target when the user asks you to contact another "
+                "group/person ('去隔壁群问问'), or when you are unsure which "
+                "conversation an id belongs to. Groups you can see here are "
+                "yours to talk to: after listing, you may send_message to any "
+                "of them with target_type+target_id, even from an active QQ "
+                "turn."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {},
+            },
+            handler=self._list_contacts,
+            skip_memory=True,
+        )
+
+    # robot_id -> (fetched_at, {(target_type, target_id), ...}); targets the
+    # platform itself confirmed this account belongs to. Seeing is owning:
+    # anything in the live contact list is a legitimate send destination.
+    _verified_contacts_lock = threading.Lock()
+    _verified_contacts: dict[str, tuple[datetime, set[tuple[str, str]]]] = {}
+    _VERIFIED_CONTACTS_TTL_SECONDS = 1800
+
+    @classmethod
+    def _remember_verified_contacts(
+        cls, robot_id: str, targets: set[tuple[str, str]]
+    ) -> None:
+        if not robot_id or not targets:
+            return
+        with cls._verified_contacts_lock:
+            cls._verified_contacts[robot_id] = (datetime.now(), set(targets))
+
+    @classmethod
+    def _is_verified_contact(
+        cls, robot_id: str, target_type: str, target_id: str
+    ) -> bool:
+        if not robot_id or not target_id:
+            return False
+        with cls._verified_contacts_lock:
+            entry = cls._verified_contacts.get(robot_id)
+            if not entry:
+                return False
+            fetched_at, targets = entry
+            if (datetime.now() - fetched_at).total_seconds() > cls._VERIFIED_CONTACTS_TTL_SECONDS:
+                cls._verified_contacts.pop(robot_id, None)
+                return False
+            return (target_type, target_id) in targets
+
+    def _list_contacts(self, args: dict) -> list[dict[str, str]]:
+        context_token = str(args.get("_robot_context_token") or "").strip()
+        context = get_robot_mcp_context(context_token)
+        robot_id = str(getattr(context, "robot_id", "") or "").strip()
+        if not robot_id:
+            robot_id = str(args.get("_robot_id") or "").strip()
+        if not robot_id:
+            return [{"type": "text", "text": "Error: robot context unavailable"}]
+
+        from app.plugins.robot.bridge_client import robot_bridge_client
+
+        groups: list[dict[str, Any]] = []
+        friends: list[dict[str, Any]] = []
+        errors: list[str] = []
+        try:
+            group_resp = robot_bridge_client.call_api(robot_id, "get_group_list")
+            if group_resp.get("success") and isinstance(group_resp.get("data"), list):
+                groups = group_resp["data"]
+            elif group_resp.get("error"):
+                errors.append(f"get_group_list: {group_resp['error']}")
+        except Exception as exc:
+            errors.append(f"get_group_list: {exc}")
+        try:
+            friend_resp = robot_bridge_client.call_api(robot_id, "get_friend_list")
+            if friend_resp.get("success") and isinstance(friend_resp.get("data"), list):
+                friends = friend_resp["data"]
+            elif friend_resp.get("error"):
+                errors.append(f"get_friend_list: {friend_resp['error']}")
+        except Exception as exc:
+            errors.append(f"get_friend_list: {exc}")
+
+        verified: set[tuple[str, str]] = set()
+        lines: list[str] = []
+        if groups:
+            lines.append(f"我所在的群（{len(groups)} 个）：")
+            for group in groups:
+                group_id = str(group.get("group_id") or "").strip()
+                name = str(group.get("group_name") or "").strip() or "( unnamed )"
+                if not group_id:
+                    continue
+                verified.add(("group", group_id))
+                member_count = group.get("member_count")
+                count_note = f"，{member_count} 人" if member_count else ""
+                lines.append(f"- {name}（群号 {group_id}{count_note}）")
+        if friends:
+            lines.append(f"好友（{len(friends)} 个）：")
+            for friend in friends[:50]:
+                user_id = str(friend.get("user_id") or "").strip()
+                name = str(
+                    friend.get("nickname") or friend.get("remark") or ""
+                ).strip() or "( unnamed )"
+                if not user_id:
+                    continue
+                verified.add(("private", user_id))
+                lines.append(f"- {name}（QQ {user_id}）")
+        if not lines:
+            detail = "; ".join(errors) if errors else "empty list"
+            return [{"type": "text", "text": f"没拿到联系人列表：{detail}"}]
+
+        self._remember_verified_contacts(robot_id, verified)
+        lines.append("")
+        lines.append(
+            "以上都是这个账号真实所在的会话。要联系其中任何一个，"
+            "send_message 传 target_type（group/private）+ target_id（群号/QQ号）即可。"
+            "每个群的“性格”从它的聊天内容里感受，列表只回答“我在哪”。"
+        )
+        if errors:
+            lines.append(f"（部分查询失败：{'; '.join(errors)}）")
+        return [{"type": "text", "text": "\n".join(lines)}]
 
     def _normalize_target_type(self, value: Any) -> str:
         raw = str(value or "").strip().lower()
@@ -821,24 +944,33 @@ class RobotMCPServer:
         active_label = (
             active_target["conversation"] if active_target is not None else "current"
         )
+        robot_id = str(getattr(context, "robot_id", "") or "").strip()
         error = (
-            "Error: active QQ-triggered context is locked to "
-            f"{active_label}. Omit reply_to/conversation/broadcast/target_type/"
-            "target_id/targets to send to the current QQ conversation. "
-            "Cross-conversation sends must be initiated from backend chat, not "
-            "from an incoming QQ message turn."
+            "Error: target not recognized in this turn. To reply to the current "
+            f"conversation ({active_label}), omit reply_to/conversation/target_type/"
+            "target_id. To reach another group or friend, call list_contacts "
+            "first and pick the target from your actual contact list - contacts "
+            "you can see there are unlocked for sending. Broadcast is not allowed."
         )
 
         known = list(known_targets or [])
+
+        def _allowed(target: RobotReplyTarget) -> bool:
+            if self._target_matches_known(target, known):
+                return True
+            return self._is_verified_contact(
+                robot_id,
+                str(target.target_type or "").strip(),
+                str(target.target_id or "").strip(),
+            )
+
         # 合并轮次（多个 QQ 来源）时，模型可以自行决定给哪个来源回、回不回：
         # 显式目标落在本轮已知来源集合内即放行；广播仍然禁止（无法界定范围）。
         if broadcast:
             return error
         if explicit_targets:
             entries = list(explicit_target_list or [])
-            if entries and all(
-                self._target_matches_known(entry, known) for entry in entries
-            ):
+            if entries and all(_allowed(entry) for entry in entries):
                 return ""
             return error
         if explicit_target is not None:
@@ -847,7 +979,7 @@ class RobotMCPServer:
                 active_target,
             ):
                 return ""
-            if self._target_matches_known(explicit_target, known):
+            if _allowed(explicit_target):
                 return ""
             return error
         if context_reference and (
@@ -1350,11 +1482,10 @@ class RobotMCPServer:
             active_target["conversation"] if active_target is not None else "current"
         )
         return (
-            "Error: active QQ-triggered context is locked to "
-            f"{active_label}. Omit reply_to/conversation/target_type/target_id "
-            "to read the current QQ conversation memory. Cross-conversation "
-            "memory reads must be initiated from backend chat, not from an "
-            "incoming QQ message turn."
+            f"Error: target not recognized in this turn. Omit reply_to/"
+            f"conversation/target_type/target_id to read the current "
+            f"conversation ({active_label}); for another conversation, call "
+            "list_contacts first - contacts you can see there are unlocked."
         )
 
     def _sleep_conversation(self, args: dict) -> list[dict[str, str]]:
@@ -2255,12 +2386,24 @@ class RobotMCPServer:
                 requested_target,
                 active_target,
             ):
-                return [
-                    {
-                        "type": "text",
-                        "text": self._active_context_memory_target_error(active_target),
-                    }
-                ]
+                # 读过别的会话的记忆是无害操作：目标只要是本轮见过的来源或
+                # list_contacts 确认过的真实联系人就放行。
+                robot_id_for_check = str(getattr(context, "robot_id", "") or "").strip()
+                known = args.get("_robot_known_targets") or []
+                if not (
+                    self._target_matches_known(requested_target, known)
+                    or self._is_verified_contact(
+                        robot_id_for_check,
+                        str(requested_target.target_type or "").strip(),
+                        str(requested_target.target_id or "").strip(),
+                    )
+                ):
+                    return [
+                        {
+                            "type": "text",
+                            "text": self._active_context_memory_target_error(active_target),
+                        }
+                    ]
             context_reference = str(
                 args.get("reply_to") or args.get("conversation") or ""
             ).strip()

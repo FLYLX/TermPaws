@@ -18,6 +18,7 @@ from fastapi import APIRouter, FastAPI, Header, HTTPException, WebSocket
 from app.core.config import settings
 from app.plugins.robot.bridge.rate_limit import send_text_with_rate_limit
 from app.plugins.robot.contracts import (
+    RobotBridgeCallApiRequest,
     RobotBridgeReloadResponse,
     RobotBridgeSendRequest,
     RobotDispatchResponse,
@@ -1585,6 +1586,35 @@ def init_embedded_bridge() -> APIRouter | None:
                 if exc.status_code != 404:
                     raise
                 return await _forward_to_owner("/internal/send", body=body)
+
+        async def _call_api_from_owner(body: RobotBridgeCallApiRequest) -> dict[str, Any]:
+            robot_id = str(body.robot_id)
+            bot = _resolve_bot_for_robot(robot_id)
+            if bot is None:
+                raise HTTPException(
+                    status_code=404, detail="Robot is not loaded in bridge"
+                )
+            action = str(body.action or "").strip()
+            if not action or not action.replace("_", "").isalnum() or len(action) > 64:
+                raise HTTPException(status_code=400, detail="Invalid action name")
+            try:
+                data = await bot.call_api(action, **(body.params or {}))
+            except Exception as exc:
+                return {"success": False, "data": None, "error": str(exc)}
+            return {"success": True, "data": data, "error": None}
+
+        @_bridge_router.post("/internal/call_api")
+        async def internal_call_api(
+            body: RobotBridgeCallApiRequest,
+            x_termpaws_bridge_token: str | None = Header(default=None),
+        ) -> dict[str, Any]:
+            _assert_bridge_permission(x_termpaws_bridge_token)
+            try:
+                return await _call_api_from_owner(body)
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+                return await _forward_to_owner("/internal/call_api", body=body)
 
         async def _health_from_owner() -> dict[str, Any]:
             checked_at = datetime.now(timezone.utc).isoformat()

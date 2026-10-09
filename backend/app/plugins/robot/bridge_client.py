@@ -8,6 +8,7 @@ import httpx
 from app.core.config import settings
 
 from .contracts import (
+    RobotBridgeCallApiRequest,
     RobotBridgeReloadResponse,
     RobotBridgeSendRequest,
     RobotReplyTarget,
@@ -99,6 +100,29 @@ class RobotBridgeClient:
         if isinstance(data, dict):
             return data
         return {"data": data}
+
+    def call_api(
+        self,
+        robot_id: uuid.UUID | str,
+        action: str,
+        params: dict | None = None,
+        *,
+        timeout: float = 15.0,
+    ) -> dict:
+        """Call a platform (onebot) action on the robot's live connection,
+        e.g. get_group_list / get_friend_list. Returns {"success", "data",
+        "error"}."""
+        payload = RobotBridgeCallApiRequest(
+            robot_id=uuid.UUID(str(robot_id)),
+            action=action,
+            params=params or {},
+        )
+        response = self._request(
+            "POST", "/internal/call_api", timeout=timeout,
+            json=payload.model_dump(mode="json"),
+        )
+        data = response.json()
+        return data if isinstance(data, dict) else {"success": False, "data": None, "error": "bad bridge response"}
 
     def send_message(self, robot_id: uuid.UUID | str, target: RobotReplyTarget, text: str) -> None:
         robot_id_str = str(robot_id)

@@ -341,7 +341,7 @@ class RobotMCPServer:
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 3650,
-                        "description": "Optional retention days for fact/context. Preference and error memories are permanent.",
+                        "description": "Retention days for fact/context. REQUIRED for time-bound facts (plans, trips, temporary states) - estimate it yourself (e.g. 'travels next month' -> 45). Permanent facts, preferences and errors need none.",
                     },
                 },
                 "required": ["content"],
@@ -1696,11 +1696,12 @@ class RobotMCPServer:
         try:
             from app.services.agent.prompts import policy as memory_policy
 
-            if memory_policy.should_reject_long_term_memory(content):
+            rejection = memory_policy.memory_content_rejection_reason(content)
+            if rejection:
                 return [
                     {
                         "type": "text",
-                        "text": "Memory not saved: content is too long, noisy, sensitive, or empty.",
+                        "text": f"记忆未保存：{rejection}",
                     }
                 ]
 
@@ -1806,6 +1807,12 @@ class RobotMCPServer:
         memory_type = str(args.get("memory_type") or "").strip()
         if memory_type and memory_type not in LONG_TERM_MEMORY_TYPES:
             return [{"type": "text", "text": f"Error: invalid memory_type: {memory_type}"}]
+
+        from app.services.agent.prompts import policy as memory_policy
+
+        rejection = memory_policy.memory_content_rejection_reason(content)
+        if rejection:
+            return [{"type": "text", "text": f"压缩结果未保存：{rejection}"}]
 
         context_token = str(args.get("_robot_context_token") or "").strip()
         context = get_robot_mcp_context(context_token)
@@ -2080,6 +2087,21 @@ class RobotMCPServer:
             lines.append(
                 f"{index}. [{memory_id[:8]}] [{self._memory_type(memory)}] {prefix}{content}"
             )
+        try:
+            clusters = vector_store.find_duplicate_clusters(self._memory_scope(item_id))
+        except Exception:
+            clusters = []
+        if clusters:
+            lines.append("")
+            lines.append(
+                "疑似重复（同一件事的多种说法）——是否合并由你判断，确认后用 compress_memories："
+            )
+            for cluster in clusters:
+                preview = " ≈ ".join(
+                    f"[{str(m.get('id') or '')[:8]}] {str(m.get('content') or '')[:30]}"
+                    for m in cluster[:4]
+                )
+                lines.append(f"- {preview}")
         return [{"type": "text", "text": "\n".join(lines)}]
 
     def _recall_memory(self, args: dict) -> list[dict[str, str]]:

@@ -330,3 +330,23 @@ def test_resolve_memory_status_ignores_removed_legacy_task_memory() -> None:
     }
 
     assert resolve_memory_status(memory) is None
+
+
+def test_memory_content_rejection_reason_flags_transport_markup() -> None:
+    from app.services.agent.prompts.policy import memory_content_rejection_reason
+
+    reason = memory_content_rejection_reason("[CQ:at,qq=123] 用户喜欢蓝色")
+    assert reason is not None and "CQ" in reason
+
+    reason = memory_content_rejection_reason("[Robot message; conversation=group:1] 用户喜欢蓝色")
+    assert reason is not None and "消息戳" in reason
+
+    reason = memory_content_rejection_reason("历史事实记忆摘要：用户喜欢蓝色")
+    assert reason is not None and "摘要" in reason
+
+    assert memory_content_rejection_reason("用户最喜欢的颜色是蓝色") is None
+
+
+def test_should_reject_long_term_memory_delegates_to_reason() -> None:
+    assert should_reject_long_term_memory("[CQ:face,id=1]") is True
+    assert should_reject_long_term_memory("用户偏好简洁回复") is False

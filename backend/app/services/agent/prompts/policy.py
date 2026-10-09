@@ -317,19 +317,40 @@ def _build_content_hash(content: str) -> str:
     return hashlib.sha1(normalized.encode("utf-8")).hexdigest()
 
 
-def should_reject_long_term_memory(content: str) -> bool:
+MEMORY_SUMMARY_PREFIX_RE = re.compile(r"^历史\S{0,6}记忆摘要[:：]")
+ROBOT_MESSAGE_STAMP_RE = re.compile(r"\[Robot message;[^\]]*\]", re.IGNORECASE)
+QQ_MESSAGE_MARKER_RE = re.compile(r"\[(?:Current QQ message|Pending QQ messages)[^\]]*\]", re.IGNORECASE)
+
+
+def memory_content_rejection_reason(content: str) -> str | None:
+    """Returns a human/agent-readable rejection reason, or None if clean.
+
+    Hygiene rules for the long-term memory write path: memory stores facts,
+    not transports. QQ message stamps/CQ codes are addressing metadata, and
+    summary-of-summary nesting just grows labels without adding information.
+    """
     normalized = (content or "").strip()
     if not normalized:
-        return True
+        return "内容为空"
     if len(normalized) > MAX_MEMORY_CONTENT_LENGTH:
-        return True
+        return f"内容太长（>{MAX_MEMORY_CONTENT_LENGTH} 字），提炼成一句要点再存"
+    if AUTO_MEMORY_CQ_RE.search(normalized):
+        return "内容含 CQ 码（[CQ:...] 是传输层格式，不是事实）——去掉 CQ 码，用干净的自然语言重写再存"
+    if ROBOT_MESSAGE_STAMP_RE.search(normalized) or QQ_MESSAGE_MARKER_RE.search(normalized):
+        return "内容含消息戳/会话标记（[Robot message;...] 等是路由元数据，不是事实）——去掉标记，只存事实本身"
+    if MEMORY_SUMMARY_PREFIX_RE.search(normalized):
+        return "内容本身已是压缩摘要——不要对摘要再压缩/再存；如需保留其中信息，提炼成一条干净的事实句再存"
     if _is_waiting_state_content(normalized):
-        return True
+        return "内容是等待/进行中的状态——任务状态放任务队列，不进长期记忆"
     if _looks_like_log_noise(normalized):
-        return True
+        return "内容像日志噪声（栈/回显/多行原文）——提炼成一句结论再存"
     if _contains_sensitive_content(normalized):
-        return True
-    return False
+        return "内容疑似敏感信息——敏感信息不进长期记忆"
+    return None
+
+
+def should_reject_long_term_memory(content: str) -> bool:
+    return memory_content_rejection_reason(content) is not None
 
 
 def _normalize_memory_key_fragment(value: str) -> str:

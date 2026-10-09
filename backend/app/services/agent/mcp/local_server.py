@@ -656,7 +656,7 @@ class LocalMCPServer:
         )
         self.register_tool(
             name="save_memory",
-            description="保存稳定、可复用、已验证的重要信息到长期记忆中。用户随口提到的个人信息（家庭、喜好、计划、所有物、常去地点、正在做的事）也值得保存，不必等用户说『记住』。执行中的任务状态只放任务队列。不要保存原生日志、命令回显、等待态消息或敏感信息。",
+            description="保存稳定、可复用、已验证的重要信息到长期记忆中。用户随口提到的个人信息（家庭、喜好、计划、所有物、常去地点、正在做的事）也值得保存，不必等用户说『记住』。执行中的任务状态只放任务队列。不要保存原生日志、命令回显、等待态消息或敏感信息。带时效的事实（计划、行程、临时状态）必须自己估一个 ttl_days（如『下个月去旅游』→ 45），持久事实不用设。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -2676,6 +2676,10 @@ class LocalMCPServer:
             from app.services.agent.memory.vector_store import vector_store
             from app.services.agent.prompts import policy as memory_policy
 
+            rejection = memory_policy.memory_content_rejection_reason(str(content))
+            if rejection:
+                return [{"type": "text", "text": f"记忆未保存：{rejection}"}]
+
             default_ttl_days = memory_policy.resolve_memory_ttl_days(str(memory_type))
             raw_ttl_days = args.get("ttl_days")
             if default_ttl_days is None:
@@ -2735,6 +2739,10 @@ class LocalMCPServer:
         try:
             from app.services.agent.memory.vector_store import vector_store
             from app.services.agent.prompts import policy as memory_policy
+
+            rejection = memory_policy.memory_content_rejection_reason(content)
+            if rejection:
+                return [{"type": "text", "text": f"压缩结果未保存：{rejection}"}]
 
             all_memories = vector_store.get_all_memories(self._memory_scope(item_id))
             sources: list[dict[str, Any]] = []
@@ -2896,6 +2904,22 @@ class LocalMCPServer:
                 m_type = m.get("metadata", {}).get("memory_type", "unknown")
                 m_id = m.get("id", "")[:8]
                 lines.append(f"[{m_id}] ({m_type}) {m['content'][:50]}...")
+
+            try:
+                clusters = vector_store.find_duplicate_clusters(
+                    self._memory_scope(item_id)
+                )
+            except Exception:
+                clusters = []
+            if clusters:
+                lines.append("")
+                lines.append("疑似重复（同一件事的多种说法）——是否合并由你判断，确认后用 compress_memories：")
+                for cluster in clusters:
+                    preview = " ≈ ".join(
+                        f"[{str(m.get('id') or '')[:8]}] {str(m.get('content') or '')[:30]}"
+                        for m in cluster[:4]
+                    )
+                    lines.append(f"- {preview}")
 
             return [{"type": "text", "text": "\n".join(lines)}]
         except Exception as e:

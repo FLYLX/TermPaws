@@ -38,6 +38,11 @@ EXPIRED_MEMORY_COMPACTION_THRESHOLD = 10
 EXPIRED_MEMORY_SUMMARY_MAX_CHARS = 800
 DEDUP_THRESHOLD = 0.95
 SUMMARIZE_THRESHOLD = 10
+MEMORY_SUMMARY_PREFIX_STRIP_RE = re.compile(r"^(?:历史\S{0,6}记忆摘要[:：]\s*)+")
+MEMORY_TRANSPORT_MARKUP_RE = re.compile(
+    r"\[CQ:[^\]]*\]|\[Robot message;[^\]]*\]|\[(?:Current QQ message|Pending QQ messages)[^\]]*\]",
+    re.IGNORECASE,
+)
 DEFAULT_RECALL_CANDIDATE_MULTIPLIER = 4
 FALLBACK_EMBEDDING_DIMENSION = 384
 MEMORY_COLLECTION_NAME = "handler_memories"
@@ -1542,6 +1547,11 @@ class VectorStoreService:
                 " ",
                 str(memory.get("content") or "").strip(),
             )
+            # 摘要不再进摘要（防"摘要：摘要："嵌套增殖）；传输层格式
+            # （CQ 码/消息戳）不是事实，压缩时剥掉而不是带进下一条。
+            content = MEMORY_SUMMARY_PREFIX_STRIP_RE.sub("", content)
+            content = MEMORY_TRANSPORT_MARKUP_RE.sub(" ", content)
+            content = re.sub(r"\s+", " ", content).strip(" ；;")
             if not content:
                 continue
             normalized = content.casefold()
@@ -1719,6 +1729,11 @@ class VectorStoreService:
         contents = [m["content"] for m in all_memories]
         embeddings = self._try_encode(contents)
 
+        mem_types = [
+            str((m.get("metadata") or {}).get("memory_type") or "")
+            for m in all_memories
+        ]
+
         ids_to_delete = set()
         if embeddings is not None:
             for i in range(len(embeddings)):
@@ -1726,6 +1741,8 @@ class VectorStoreService:
                     continue
                 for j in range(i + 1, len(embeddings)):
                     if all_memories[j]["id"] in ids_to_delete:
+                        continue
+                    if mem_types[i] != mem_types[j]:
                         continue
 
                     similarity = self._cosine_similarity(embeddings[i], embeddings[j])
@@ -1744,6 +1761,8 @@ class VectorStoreService:
                     continue
                 for j in range(i + 1, len(token_sets)):
                     if all_memories[j]["id"] in ids_to_delete or not token_sets[j]:
+                        continue
+                    if mem_types[i] != mem_types[j]:
                         continue
                     union = token_sets[i] | token_sets[j]
                     if not union:
@@ -1768,6 +1787,52 @@ class VectorStoreService:
             )
 
         return len(ids_to_delete)
+
+    def find_duplicate_clusters(
+        self,
+        handler_id: str,
+        *,
+        threshold: float = 0.8,
+        max_clusters: int = 5,
+    ) -> list[list[dict[str, Any]]]:
+        """Detect-only near-duplicate clusters (same memory_type, embedding
+        similarity >= threshold). Merging is the agent's call via
+        compress_memories - this only surfaces suspects."""
+        all_memories = self.get_all_memories(handler_id)
+        if len(all_memories) < 2:
+            return []
+        embeddings = self._try_encode([m["content"] for m in all_memories])
+        if embeddings is None:
+            return []
+        mem_types = [
+            str((m.get("metadata") or {}).get("memory_type") or "")
+            for m in all_memories
+        ]
+        parent = list(range(len(all_memories)))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for i in range(len(embeddings)):
+            for j in range(i + 1, len(embeddings)):
+                if mem_types[i] != mem_types[j]:
+                    continue
+                if self._cosine_similarity(embeddings[i], embeddings[j]) >= threshold:
+                    parent[find(j)] = find(i)
+
+        groups: dict[int, list[int]] = {}
+        for i in range(len(all_memories)):
+            groups.setdefault(find(i), []).append(i)
+        clusters = [
+            [all_memories[i] for i in idxs]
+            for idxs in groups.values()
+            if len(idxs) >= 2
+        ]
+        clusters.sort(key=lambda c: -len(c))
+        return clusters[:max_clusters]
 
     def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
         import numpy as np

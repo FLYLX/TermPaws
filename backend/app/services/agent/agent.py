@@ -48,15 +48,28 @@ class AgentContext:
     current_user_id: str = ""
     current_user_is_superuser: bool = False
     reply_ticket_id: str = ""
+    # 回合级 robot 状态按线程隔离：QQ 派发是多线程并发的（不同群的回合
+    # 在两个 worker 线程里并行跑），共享 dict 会互相覆盖 context token /
+    # known_targets，表现为"发到别的群"。每个回合线程看到各自的上下文。
+    _robot_turn_state: threading.local = field(
+        default_factory=threading.local, repr=False, compare=False
+    )
 
     def _integration_state(self, name: str) -> dict[str, Any]:
         return self.integration_contexts.setdefault(name, {})
 
+    def _robot_state(self) -> dict[str, Any]:
+        state = getattr(self._robot_turn_state, "state", None)
+        if state is None:
+            state = {}
+            self._robot_turn_state.state = state
+        return state
+
     def _get_robot_value(self, key: str, default: Any = "") -> Any:
-        return self.integration_contexts.get("robot", {}).get(key, default)
+        return self._robot_state().get(key, default)
 
     def _set_robot_value(self, key: str, value: Any) -> None:
-        self._integration_state("robot")[key] = value
+        self._robot_state()[key] = value
 
     @property
     def robot_id(self) -> str:

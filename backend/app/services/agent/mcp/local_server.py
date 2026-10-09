@@ -656,7 +656,7 @@ class LocalMCPServer:
         )
         self.register_tool(
             name="save_memory",
-            description="保存稳定、可复用、已验证的重要信息到长期记忆中。用户随口提到的个人信息（家庭、喜好、计划、所有物、常去地点、正在做的事）也值得保存，不必等用户说『记住』。执行中的任务状态只放任务队列。不要保存原生日志、命令回显、等待态消息或敏感信息。带时效的事实（计划、行程、临时状态）必须自己估一个 ttl_days（如『下个月去旅游』→ 45），持久事实不用设。",
+            description="保存稳定、可复用、已验证的重要信息到长期记忆中。用户随口提到的个人信息（家庭、喜好、计划、所有物、常去地点、正在做的事）也值得保存，不必等用户说『记住』。执行中的任务状态只放任务队列。不要保存原生日志、命令回显、等待态消息或敏感信息。带时效的事实（计划、行程、临时状态）必须自己估一个 ttl_days（如『下个月去旅游』→ 45），持久事实不用设。内容里的时间必须写绝对日期（『用户（2026-09-02 说）计划 10 月去青岛』），禁止只写『下个月/昨天/前几天』这类相对词——未来的你不知道那是哪天。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -2869,9 +2869,13 @@ class LocalMCPServer:
                 if not content:
                     continue
                 prefix = f"{sender}: " if sender and not content.startswith(sender) else ""
+                created = str(
+                    metadata.get("created_at") or metadata.get("updated_at") or ""
+                )[:10]
+                date_tag = f"[{created}] " if created else ""
                 if len(content) > 400:
                     content = content[:397] + "..."
-                lines.append(f"- {prefix}{content}")
+                lines.append(f"- {date_tag}{prefix}{content}")
 
             return [{"type": "text", "text": "\n".join(lines)}]
         except Exception as e:
@@ -2901,9 +2905,12 @@ class LocalMCPServer:
 
             lines = [f"=== 共 {len(memories)} 条记忆 ==="]
             for m in memories:
-                m_type = m.get("metadata", {}).get("memory_type", "unknown")
+                m_meta = m.get("metadata") or {}
+                m_type = m_meta.get("memory_type", "unknown")
                 m_id = m.get("id", "")[:8]
-                lines.append(f"[{m_id}] ({m_type}) {m['content'][:50]}...")
+                m_date = str(m_meta.get("created_at") or m_meta.get("updated_at") or "")[:10]
+                date_tag = f" {m_date}" if m_date else ""
+                lines.append(f"[{m_id}] ({m_type}{date_tag}) {m['content'][:50]}...")
 
             try:
                 clusters = vector_store.find_duplicate_clusters(

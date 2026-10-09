@@ -323,7 +323,10 @@ class RobotMCPServer:
                 "names/nicknames, bot identity rules, durable preferences, "
                 "relationships, reusable facts, recurring group context. "
                 "Execution state belongs to the task queue. Never save trivial "
-                "chatter, images, reactions, raw logs, or secrets."
+                "chatter, images, reactions, raw logs, or secrets. Write times "
+                "as absolute dates (e.g. 'user said on 2026-09-02: trip in "
+                "October'), never relative words like 'next month/yesterday' - "
+                "future you won't know what day that was."
             ),
             input_schema={
                 "type": "object",
@@ -2084,8 +2087,12 @@ class RobotMCPServer:
             content = str(memory.get("content") or "").strip()
             prefix = f"{sender}: " if sender and not content.startswith(sender) else ""
             memory_id = str(memory.get("id") or "")
+            created = str(
+                metadata.get("created_at") or metadata.get("updated_at") or ""
+            )[:10]
+            date_tag = f" {created}" if created else ""
             lines.append(
-                f"{index}. [{memory_id[:8]}] [{self._memory_type(memory)}] {prefix}{content}"
+                f"{index}. [{memory_id[:8]}{date_tag}] [{self._memory_type(memory)}] {prefix}{content}"
             )
         try:
             clusters = vector_store.find_duplicate_clusters(self._memory_scope(item_id))
@@ -2196,7 +2203,11 @@ class RobotMCPServer:
             ).strip()
             prefix = f"{sender}: " if sender and not content.startswith(sender) else ""
             memory_id = str(memory.get("id") or "")
-            lines.append(f"- [{memory_id[:8]}] {prefix}{content}")
+            created = str(
+                metadata.get("created_at") or metadata.get("updated_at") or ""
+            )[:10]
+            date_tag = f" {created}" if created else ""
+            lines.append(f"- [{memory_id[:8]}{date_tag}] {prefix}{content}")
         return [{"type": "text", "text": "\n".join(lines)}]
 
     def _read_conversation_memory(self, args: dict) -> list[dict[str, str]]:

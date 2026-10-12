@@ -490,7 +490,9 @@ class RobotMCPServer:
                 entry = cls._verified_contacts.get(robot_id)
         if not entry:
             return ""
-        _fetched_at, targets, names = entry
+        _fetched_at = entry[0]
+        targets = entry[1]
+        names = entry[2] if len(entry) > 2 else {}
         groups = sorted(
             (t for t in targets if t[0] == "group"),
             key=lambda t: names.get(t, ""),
@@ -521,7 +523,7 @@ class RobotMCPServer:
             entry = cls._verified_contacts.get(robot_id)
             if not entry:
                 return False
-            fetched_at, targets = entry
+            fetched_at, targets = entry[0], entry[1]
             if (datetime.now() - fetched_at).total_seconds() > cls._VERIFIED_CONTACTS_TTL_SECONDS:
                 cls._verified_contacts.pop(robot_id, None)
                 return False

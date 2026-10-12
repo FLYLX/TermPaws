@@ -2329,3 +2329,20 @@ def test_robot_mcp_send_message_targets_blocked_in_active_context(monkeypatch) -
 
     assert "target not recognized in this turn" in result[0]["text"]
     assert sent == []
+
+
+def test_verified_contacts_registry_check_and_roster() -> None:
+    RobotMCPServer._remember_verified_contacts(
+        "robot-v1",
+        {("group", "111"), ("private", "222")},
+        {("group", "111"): "测试群", ("private", "222"): "好友甲"},
+    )
+    try:
+        assert RobotMCPServer._is_verified_contact("robot-v1", "group", "111") is True
+        assert RobotMCPServer._is_verified_contact("robot-v1", "group", "999") is False
+        assert RobotMCPServer._is_verified_contact("robot-v1", "private", "222") is True
+        roster = RobotMCPServer.roster_line("robot-v1", allow_fetch=False)
+        assert "测试群(111)" in roster
+        assert "好友甲(222)" in roster
+    finally:
+        RobotMCPServer._verified_contacts.pop("robot-v1", None)

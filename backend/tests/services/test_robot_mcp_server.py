@@ -140,18 +140,28 @@ def test_robot_mcp_send_message_resends_identical_text(monkeypatch) -> None:
     try:
         first = server.call_tool(
             "send_message",
-            {"text": "同一个回复", "_robot_context_token": token},
+            {
+                "text": "同一个回复",
+                "target_type": "group",
+                "target_id": "123456",
+                "_robot_context_token": token,
+            },
         )
         second = server.call_tool(
             "send_message",
-            {"text": "同一个回复", "_robot_context_token": token},
+            {
+                "text": "同一个回复",
+                "target_type": "group",
+                "target_id": "123456",
+                "_robot_context_token": token,
+            },
         )
     finally:
         unregister_robot_mcp_context(token)
 
-    assert first[0]["text"].startswith("已送达用户")
+    assert first[0]["text"].startswith("已送达【")
     # 同一内容 30s 内的第二次发送被抑制（流控，防模型连续重复发）
-    assert second[0]["text"].startswith("已送达用户")
+    assert second[0]["text"].startswith("已送达【")
     assert sent == ["同一个回复"]
 
 
@@ -186,17 +196,27 @@ def test_robot_mcp_send_failure_allows_retry(monkeypatch) -> None:
     try:
         first = server.call_tool(
             "send_message",
-            {"text": "失败后重试", "_robot_context_token": token},
+            {
+                "text": "失败后重试",
+                "target_type": "group",
+                "target_id": "123456",
+                "_robot_context_token": token,
+            },
         )
         second = server.call_tool(
             "send_message",
-            {"text": "失败后重试", "_robot_context_token": token},
+            {
+                "text": "失败后重试",
+                "target_type": "group",
+                "target_id": "123456",
+                "_robot_context_token": token,
+            },
         )
     finally:
         unregister_robot_mcp_context(token)
 
     assert first[0]["text"] == "Error: bridge down"
-    assert second[0]["text"].startswith("已送达用户")
+    assert second[0]["text"].startswith("已送达【")
     assert sent == ["失败后重试"]
 
 
@@ -302,7 +322,8 @@ def test_robot_mcp_send_message_sanitizes_mixed_internal_trace(
         },
     )
 
-    assert result[0]["text"].startswith("Message sent to QQ group 123456.")
+    assert result[0]["text"].startswith("已送达【")
+    assert "123456" in result[0]["text"]
     assert sent == ["在呢。需要做什么测试？"]
     memory = robot_conversation_memory.read("robot-2", "group:123456")
     assert "在呢。需要做什么测试？" in memory
@@ -338,7 +359,8 @@ def test_robot_mcp_send_message_extracts_degraded_send_payload(monkeypatch) -> N
         },
     )
 
-    assert result[0]["text"].startswith("Message sent to QQ group 123456.")
+    assert result[0]["text"].startswith("已送达【")
+    assert "123456" in result[0]["text"]
     assert sent == ["我记得你喜欢蓝色，也在管理 Minecraft 服务器。"]
 
 
@@ -371,7 +393,8 @@ def test_robot_mcp_send_message_uses_explicit_target(monkeypatch) -> None:
         },
     )
 
-    assert result[0]["text"].startswith("Message sent to QQ group 123456.")
+    assert result[0]["text"].startswith("已送达【")
+    assert "123456" in result[0]["text"]
     assert sent["robot_id"] == "robot-2"
     assert sent["text"] == "notify group"
     assert isinstance(sent["reply_target"], RobotReplyTarget)
@@ -406,7 +429,8 @@ def test_robot_mcp_send_message_uses_llm_chosen_messages(monkeypatch) -> None:
         },
     )
 
-    assert result[0]["text"].startswith("Message sent to QQ group 123456.")
+    assert result[0]["text"].startswith("已送达【")
+    assert "123456" in result[0]["text"]
     assert sent == [
         ("robot-2", "group", "123456", "我先看一下"),
         ("robot-2", "group", "123456", "等我确认一下状态"),
@@ -441,7 +465,8 @@ def test_robot_mcp_send_message_unwraps_structured_text_blocks(monkeypatch) -> N
         },
     )
 
-    assert result[0]["text"].startswith("Message sent to QQ group 123456.")
+    assert result[0]["text"].startswith("已送达【")
+    assert "123456" in result[0]["text"]
     assert sent == [
         "RCON 也开了，现在可以进游戏了~",
         "服务器启动成功啦~ Done (2.901s)！",
@@ -478,7 +503,7 @@ def test_robot_mcp_send_message_long_text_sends_without_hard_cap(monkeypatch) ->
     )
 
     assert result[0]["type"] == "text"
-    assert "Message sent" in result[0]["text"]
+    assert result[0]["text"].startswith("已送达【")
     assert sent == ["x" * 500]
 
 
@@ -511,7 +536,8 @@ def test_robot_mcp_send_message_compacts_paragraphs_inside_each_message(
         },
     )
 
-    assert result[0]["text"].startswith("Message sent to QQ group 123456.")
+    assert result[0]["text"].startswith("已送达【")
+    assert "123456" in result[0]["text"]
     assert sent == ["我先看一下可能是桥接还没接上", "等我确认一下状态"]
 
 
@@ -558,7 +584,8 @@ def test_robot_mcp_send_message_accepts_stamped_target_aliases(monkeypatch) -> N
         },
     )
 
-    assert alias_result[0]["text"].startswith("Message sent to QQ private 654321.")
+    assert alias_result[0]["text"].startswith("已送达【")
+    assert "654321" in alias_result[0]["text"]
     assert conversation_result[0]["text"].startswith(
         "Message sent to QQ group 123456 from chat context."
     )
@@ -662,7 +689,7 @@ def test_robot_mcp_send_message_blocks_only_context_target_without_active_contex
 def test_robot_mcp_send_message_uses_registered_context(monkeypatch) -> None:
     server = RobotMCPServer()
     target = RobotReplyTarget(
-        target_type="universal",
+        target_type="group",
         target_id="group-1",
         metadata={"target": {"id": "group-1"}},
     )
@@ -688,12 +715,17 @@ def test_robot_mcp_send_message_uses_registered_context(monkeypatch) -> None:
     try:
         result = server.call_tool(
             "send_message",
-            {"text": "notify user", "_robot_context_token": token},
+            {
+                "text": "notify user",
+                "target_type": "group",
+                "target_id": "group-1",
+                "_robot_context_token": token,
+            },
         )
     finally:
         unregister_robot_mcp_context(token)
 
-    assert result[0]["text"].startswith("已送达用户")
+    assert result[0]["text"].startswith("已送达【")
     assert sent["robot_id"] == "robot-1"
     assert sent["text"] == "notify user"
     assert isinstance(sent["reply_target"], RobotReplyTarget)
@@ -725,13 +757,15 @@ def test_robot_mcp_send_message_allows_up_to_three_bubbles(monkeypatch) -> None:
             "send_message",
             {
                 "messages": ["I am here.", "What do you need?"],
+                "target_type": "group",
+                "target_id": "group-1",
                 "_robot_context_token": token,
             },
         )
     finally:
         unregister_robot_mcp_context(token)
 
-    assert result[0]["text"].startswith("已送达用户")
+    assert result[0]["text"].startswith("已送达【")
     assert sent == ["I am here.", "What do you need?"]
 
 
@@ -763,13 +797,15 @@ def test_robot_mcp_send_message_keeps_multi_sender_batch_bubbles(monkeypatch) ->
             "send_message",
             {
                 "messages": ["Alice: first answer", "Bob: second answer"],
+                "target_type": "group",
+                "target_id": "group-1",
                 "_robot_context_token": token,
             },
         )
     finally:
         unregister_robot_mcp_context(token)
 
-    assert result[0]["text"].startswith("已送达用户")
+    assert result[0]["text"].startswith("已送达【")
     assert sent == ["Alice: first answer", "Bob: second answer"]
 
 
@@ -1632,6 +1668,8 @@ def test_robot_mcp_send_message_prefers_active_context_over_ambiguous_history(
             "send_message",
             {
                 "text": "reply current chat",
+                "target_type": "group",
+                "target_id": "current-group",
                 "_robot_context_token": token,
                 "_robot_known_targets": [
                     {
@@ -1654,7 +1692,7 @@ def test_robot_mcp_send_message_prefers_active_context_over_ambiguous_history(
     finally:
         unregister_robot_mcp_context(token)
 
-    assert result[0]["text"].startswith("已送达用户")
+    assert result[0]["text"].startswith("已送达【")
     assert sent["robot_id"] == "robot-current"
     assert sent["text"] == "reply current chat"
     assert isinstance(sent["reply_target"], RobotReplyTarget)
@@ -1908,11 +1946,8 @@ def test_robot_mcp_ignores_partial_target_in_active_robot_turn(
     finally:
         unregister_robot_mcp_context(token)
 
-    assert result[0]["text"].startswith("已送达用户")
-    assert len(sent) == 1
-    assert sent[0][0] == "robot-current"
-    assert sent[0][1].target_id == "current-group"
-    assert sent[0][2] == "我是一只猪"
+    assert result[0]["text"].startswith("Error: 发送缺少目的地")
+    assert sent == []
 
 
 def test_robot_mcp_broadcast_requires_context_target() -> None:

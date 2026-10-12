@@ -98,11 +98,12 @@ class RobotMCPServer:
         self.register_tool(
             name="send_message",
             description=(
-                "Send a QQ message through the TermPaws connector. In an incoming "
-                "QQ-triggered turn, call with only text/messages to reply to the "
-                "current conversation. To proactively message another group or "
-                "friend, call list_contacts first - every contact you can see "
-                "there is unlocked for sending with target_type+target_id. "
+                "Send a QQ message through the TermPaws connector. Every call "
+                "must carry an explicit destination: target_type+target_id, "
+                "including replies to the current conversation (pass ITS id - "
+                "there is no implicit default destination). To find destinations, "
+                "use the roster in the context card or list_contacts; ids not "
+                "seen there are rejected. "
                 "Outside an active QQ "
                 "context never infer destinations from chat history: use "
                 "target_type+target_id only for explicit user-provided group/QQ "
@@ -617,6 +618,19 @@ class RobotMCPServer:
         if errors:
             lines.append(f"（部分查询失败：{'; '.join(errors)}）")
         return [{"type": "text", "text": "\n".join(lines)}]
+
+    @classmethod
+    def _target_label(cls, robot_id: str, target: Any) -> str:
+        """'群名(群号)' for receipts, so the agent sees WHERE a send landed
+        and can catch its own targeting mistakes immediately."""
+        target_id = str(getattr(target, "target_id", "") or "").strip()
+        target_type = str(getattr(target, "target_type", "") or "").strip()
+        name = ""
+        with cls._verified_contacts_lock:
+            entry = cls._verified_contacts.get(str(robot_id or ""))
+            if entry and len(entry) > 2:
+                name = entry[2].get((target_type, target_id), "")
+        return f"{name}({target_id})" if name else target_id
 
     def _normalize_target_type(self, value: Any) -> str:
         raw = str(value or "").strip().lower()
@@ -2771,7 +2785,6 @@ class RobotMCPServer:
         if active_context_delivery_error:
             return [{"type": "text", "text": active_context_delivery_error}]
         if context is not None:
-            explicit_target = None
             context_reference = ""
 
         if (
@@ -2860,13 +2873,24 @@ class RobotMCPServer:
                     messages,
                 )
                 self._remember_sent_messages(robot_id, explicit_target, sent_messages, args=args)
+                bubble_count = len(sent_messages)
+                turn_total = self._bump_turn_send_count(
+                    str(args.get("_reply_ticket_id") or ""), bubble_count
+                )
+                result_text = (
+                    f"已送达【{self._target_label(robot_id, explicit_target)}】："
+                    f"本次 {bubble_count} 条气泡完整送达（本轮累计 {turn_total} 条）。"
+                    "不要重复发送已发内容；"
+                    "如果话还没说完（比如故事讲到一半、列表没列完），继续调用本工具发下一条；"
+                    "内容真正讲完才能结束本轮——提前收尾等于把话说到一半扔下用户。"
+                )
+                form_note = self._bubble_form_feedback(messages)
+                if form_note:
+                    result_text += f"\n{form_note}"
                 return [
                     {
                         "type": "text",
-                        "text": (
-                            f"Message sent to QQ {explicit_target.target_type} "
-                            f"{explicit_target.target_id}."
-                        ),
+                        "text": result_text,
                     }
                 ]
 
@@ -2900,7 +2924,7 @@ class RobotMCPServer:
                         "type": "text",
                         "text": (
                             f"Message sent to QQ {context_target.target_type} "
-                            f"{context_target.target_id} from chat context."
+                            f"{self._target_label(robot_id, context_target)} from chat context."
                         ),
                     }
                 ]
@@ -2908,42 +2932,25 @@ class RobotMCPServer:
             if context is None:
                 return [{"type": "text", "text": "Error: robot context unavailable"}]
 
-            attempted_robot_id = context.robot_id
-            attempted_target = context.reply_target
-            attempted_mode = "current_context"
-            self._record_tool_send_event(
-                robot_id=context.robot_id,
-                target=context.reply_target,
-                text=text,
-                mode="current_context",
-                args=args,
-            )
-            sent_messages = self._send_messages(
-                robot_bridge_client,
-                attempted_robot_id,
-                attempted_target.model_copy(deep=True),
-                messages,
-            )
-            self._remember_sent_messages(attempted_robot_id, attempted_target, sent_messages, args=args)
-            bubble_count = len(sent_messages)
-            turn_total = self._bump_turn_send_count(
-                str(args.get("_reply_ticket_id") or ""), bubble_count
-            )
-            result_text = (
-                f"已送达用户：本次 {bubble_count} 条气泡完整送达（本轮累计 {turn_total} 条）。"
-                "不要重复发送已发内容；"
-                "如果话还没说完（比如故事讲到一半、列表没列完），继续调用本工具发下一条；"
-                "内容真正讲完才能结束本轮——提前收尾等于把话说到一半扔下用户。"
-            )
-            form_note = self._bubble_form_feedback(messages)
-            if form_note:
-                result_text += f"\n{form_note}"
+            # 没有隐式目的地：每次发送都是一次显式选择（像人选好聊天窗口再打字）。
+            # 当前对话也在可选列表里，回它就把它的 target 写明白——这样跨群任务
+            # 不可能再"忘了带 target 发回自己家"。
+            current_label = self._target_label(context.robot_id, context.reply_target)
+            roster = self.roster_line(str(context.robot_id or ""), allow_fetch=False)
+            roster_note = f"你在的会话：{roster}。" if roster else ""
             return [
                 {
                     "type": "text",
-                    "text": result_text,
+                    "text": (
+                        "Error: 发送缺少目的地。请显式传 target_type+target_id："
+                        f"回当前对话就传 {context.reply_target.target_type} "
+                        f"{context.reply_target.target_id}（{current_label}）；"
+                        f"发别处就从你实际在的会话里选。{roster_note}"
+                        "没见过/不在列表里的 id 会被拒绝，先 list_contacts 确认。"
+                    ),
                 }
             ]
+
         except Exception as exc:
             logger.warning("[RobotMCPServer] Failed to send robot message: %s", exc)
             if attempted_robot_id and attempted_target is not None:

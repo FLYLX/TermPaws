@@ -201,6 +201,7 @@ LOG_NOISE_PATTERNS = (
     re.compile(r"Executing tool:\s*mcp_robot_send_message", re.IGNORECASE),
     re.compile(r"Executing tool:\s*mcp_robot_sleep_conversation", re.IGNORECASE),
     re.compile(r"Message sent to current robot conversation\.", re.IGNORECASE),
+    re.compile(r"^已送达用户"),
     re.compile(r"Message sent to QQ\s+\w+", re.IGNORECASE),
     re.compile(r"\[no_qq_reply\]", re.IGNORECASE),
 )

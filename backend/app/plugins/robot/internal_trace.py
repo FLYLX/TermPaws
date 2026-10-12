@@ -134,6 +134,7 @@ def _is_robot_send_success_line(line: str) -> bool:
         or line.startswith("Message sent to current robot conversation.")
         or line.startswith("Broadcast sent to ")
         or line.startswith("Multi-target QQ send to ")
+        or line.startswith("已送达用户")
     )
 
 
@@ -142,6 +143,7 @@ def _contains_robot_send_success(line: str) -> bool:
         "Message sent to QQ " in line
         or "Message sent to current robot conversation." in line
         or "Broadcast sent to " in line
+        or "已送达用户" in line
     )
 
 

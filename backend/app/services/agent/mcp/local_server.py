@@ -1056,6 +1056,17 @@ class LocalMCPServer:
         # resolvable ticket gets an error instead of writing the plan anywhere
         # it would be misattributed.
         ticket = reply_ticket_manager.get(reply_ticket_id) if reply_ticket_id else None
+        if ticket is None and not reply_ticket_id:
+            # 没有任何票据上下文：plan 无从归属（设计即拒绝，防错挂）。
+            return [
+                {
+                    "type": "text",
+                    "text": (
+                        "Error: 无法关联 ticket（reply ticket 不存在或已失效），"
+                        "plan 未保存。请先继续当前任务，必要时重新发起。"
+                    ),
+                }
+            ]
         if ticket is None:
             # 票据 TTL 到期是常态（6h），任务链不该跟着死：续一张新票并把
             # 旧 id 设成别名——后续带旧票据号的调用继续工作，plan 得以续写。

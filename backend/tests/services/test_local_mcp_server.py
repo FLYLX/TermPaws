@@ -1765,25 +1765,37 @@ def test_update_plan_all_completed_clears_ticket_plan(monkeypatch) -> None:
     assert "All steps complete" in result[0]["text"]
 
 
-def test_update_plan_without_resolvable_ticket_is_rejected(monkeypatch) -> None:
+def test_update_plan_without_ticket_id_is_rejected(monkeypatch) -> None:
     manager, make_ticket = _patch_reply_ticket_manager(monkeypatch)
     ticket = make_ticket()
     server = LocalMCPServer()
 
-    for args in (
+    result = server.call_tool(
+        "update_plan",
         {"item_id": "item-1", "plan": [{"step": "s", "status": "pending"}]},
+    )
+    assert "无法关联 ticket" in result[0]["text"]
+    assert ticket.plan == []
+
+
+def test_update_plan_on_expired_ticket_renews_it(monkeypatch) -> None:
+    manager, make_ticket = _patch_reply_ticket_manager(monkeypatch)
+    make_ticket()
+    server = LocalMCPServer()
+
+    result = server.call_tool(
+        "update_plan",
         {
             "item_id": "item-1",
             "_reply_ticket_id": "missing-ticket",
-            "plan": [{"step": "s", "status": "pending"}],
+            "plan": [{"step": "install", "status": "in_progress"}],
         },
-    ):
-        result = server.call_tool("update_plan", args)
-        assert "无法关联 ticket" in result[0]["text"]
-
-    # Nothing was written anywhere.
-    assert ticket.plan == []
-    assert manager.latest_plan_for_item("item-1")[1] == []
+    )
+    assert "Plan updated" in result[0]["text"]
+    renewed = manager.get("missing-ticket")
+    assert renewed is not None
+    assert renewed.ticket_id != "missing-ticket"
+    assert renewed.plan == [{"step": "install", "status": "in_progress"}]
 
 
 def test_plan_reminder_reads_plan_of_owning_ticket(monkeypatch) -> None:

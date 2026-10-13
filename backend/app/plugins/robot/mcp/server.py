@@ -2520,7 +2520,17 @@ class RobotMCPServer:
                     }
                 ]
             robot_id = context.robot_id
-            conversation_key = active_target["conversation"]
+            if requested_target is not None and not self._same_target(
+                requested_target,
+                active_target,
+            ):
+                from app.plugins.robot.conversation_memory import (
+                    conversation_key_from_reply_target,
+                )
+
+                conversation_key = conversation_key_from_reply_target(requested_target)
+            else:
+                conversation_key = active_target["conversation"]
         else:
             if explicit_target is not None:
                 target = explicit_target

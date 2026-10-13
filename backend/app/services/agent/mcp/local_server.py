@@ -29,6 +29,19 @@ JOB_RESULT_POLL_MAX_ERRORS = 30
 COMMAND_DISPATCH_FAILED_MARKER = "command_dispatch_failed"
 TERMINAL_UNAVAILABLE_RESULT_MARKER = "terminal_unavailable"
 
+# 全屏交互程序（进了它们终端就不回 shell）：execute_command 发出这类命令时
+# 给 agent 一个即时提醒，免得它在卡住的终端里继续发命令试探。
+FULLSCREEN_PROGRAM_NAMES = frozenset({
+    "nano", "vim", "vi", "nvim", "emacs", "pico", "joe", "micro", "mcedit",
+    "less", "more", "most",
+    "top", "htop", "btop", "atop", "glances", "iotop", "iftop", "nmon",
+    "watch", "tmux", "screen", "mc", "ranger", "nnn", "vifm",
+    "python", "python3", "ipython", "node", "irb", "ghci", "lua", "php",
+    "mysql", "mariadb", "psql", "sqlite3", "mongo", "redis-cli",
+    "ssh", "telnet", "ftp", "sftp", "nc", "ncat", "socat",
+    "gdb", "lldb", "bc", "dc", "ed", "ex",
+})
+
 # Background job result coalescing: results arriving while a turn is running
 # are buffered in the system-level input merge buffer and merged into ONE
 # follow-up turn when the turn ends.
@@ -2165,6 +2178,16 @@ class LocalMCPServer:
             success = InputSDK().send(item_id, command)
             debug_log(f"[LocalMCPServer] send result: success={success}")
 
+            fullscreen_note = ""
+            if success:
+                first_word = command.strip().split()[0] if command.strip() else ""
+                if first_word in FULLSCREEN_PROGRAM_NAMES:
+                    fullscreen_note = (
+                        f"\n注意：{first_word} 是全屏交互程序，终端不会回到 shell，"
+                        "后续命令不会执行、输出也会异常。如果这不是你的本意，"
+                        "立刻 interrupt_command（Ctrl+C）退出，换别的方式（如 run_job 或直接写文件）。"
+                    )
+
             return [
                 {
                     "type": "text",
@@ -2172,7 +2195,7 @@ class LocalMCPServer:
                         f"命令已发送: {command.strip()}。终端输出会在下一轮反馈中到达，你可以继续执行其他操作或等待结果。"
                         if success
                         else self._terminal_unavailable_message(str(item_id))
-                    ),
+                    ) + fullscreen_note,
                 }
             ]
         except Exception as e:

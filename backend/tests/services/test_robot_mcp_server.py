@@ -2381,3 +2381,44 @@ def test_verified_contacts_registry_check_and_roster() -> None:
         assert "好友甲(222)" in roster
     finally:
         RobotMCPServer._verified_contacts.pop("robot-v1", None)
+
+
+def test_read_conversation_memory_reads_verified_other_group(monkeypatch) -> None:
+    from app.plugins.robot.conversation_memory import robot_conversation_memory
+
+    server = RobotMCPServer()
+    target = RobotReplyTarget(
+        target_type="group",
+        target_id="111",
+        metadata={"conversation": {"type": "group", "id": "111"}},
+    )
+    token = register_robot_mcp_context(
+        RobotMCPContext(robot_id="robot-v1", sender_key="s1", reply_target=target)
+    )
+    RobotMCPServer._remember_verified_contacts(
+        "robot-v1",
+        {("group", "111"), ("group", "222")},
+        {("group", "111"): "当前群", ("group", "222"): "隔壁群"},
+    )
+    seen_keys: list[str] = []
+    monkeypatch.setattr(
+        robot_conversation_memory,
+        "read",
+        lambda robot_id, conversation_key: seen_keys.append(conversation_key)
+        or "隔壁群昨天聊到服务器进度",
+    )
+    try:
+        result = server.call_tool(
+            "read_conversation_memory",
+            {
+                "target_type": "group",
+                "target_id": "222",
+                "_robot_context_token": token,
+            },
+        )
+    finally:
+        unregister_robot_mcp_context(token)
+        RobotMCPServer._verified_contacts.pop("robot-v1", None)
+
+    assert seen_keys == ["group:222"]
+    assert "隔壁群昨天聊到服务器进度" in result[0]["text"]

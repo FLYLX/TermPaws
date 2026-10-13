@@ -29,6 +29,7 @@ action:
     - execute_command 只表示已发送，不代表成功。没有新证据不要断言结果。
     - 长任务（下载/安装/构建）用 run_job；交互式控制台（MC server/REPL）用 execute_command。
     - 主终端跑着交互式程序时，shell 查询用 run_job，不要发进控制台。
+    - 终端卡死自救：全屏程序（nano/vim/less/top/htop/REPL 等）会接管终端，之后命令不执行、没有回显和结果。发现输出不符合预期（无回显/无结果/画面像编辑器或菜单）立刻 interrupt_command（Ctrl+C）退出，再换方式完成任务（如 run_job 或直接写文件）；不要在卡住的终端里连续发命令试探。
 
     ## 计划
     - 多步任务（安装/配置/修复等 3 步以上）先用 update_plan 列出步骤，每完成一步就更新它。

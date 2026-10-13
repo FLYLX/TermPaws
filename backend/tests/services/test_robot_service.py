@@ -4609,6 +4609,9 @@ def test_record_and_send_job_error_reaches_qq_before_state_clear(
 
     item = create_random_item(db)
     robot = create_random_robot(db)
+    item.owner_id = robot.owner_id
+    db.add(item)
+    db.commit()
     service = RobotService()
     generation = service._begin_reply_context_dispatch(robot, "group:g1")
     job = robot_service_module_queued_job(robot, item, "error-1")
@@ -4625,17 +4628,27 @@ def test_record_and_send_job_error_reaches_qq_before_state_clear(
     )
     monkeypatch.setattr(
         service,
+        "_enqueue_pending_chat_followup",
+        lambda **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        service,
         "_remember_assistant_conversation_memory",
         lambda *args, **kwargs: None,
     )
 
     service._record_and_send_job_error(job, "任务处理超时，已强制中止。请重新发一次。")
 
-    assert sent and "超时" in sent[0]
+    # 内部失败文本不直发群：QQ 零发送，失败详情派生为纠正轮输入，由 agent
+    # 自己用大白话告诉用户（或判断为内部噪音静默）。
+    assert sent == []
     key = service._conversation_controller_key(robot.id, "group:g1")
     controller = service._conversation_controllers[key]
     assert controller.processing is False
     assert controller.sleeping is True
+    pending_texts = service._pending_chat_message_texts(robot.id, "group:g1")
+    assert pending_texts and "超时" in pending_texts[0]
+    assert "上一轮处理失败" in pending_texts[0]
 
 
 def test_think_blocks_are_stripped_from_visible_text() -> None:

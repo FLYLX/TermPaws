@@ -1384,9 +1384,10 @@ class RobotService:
         job: QueuedRobotChatJob,
         message: str,
     ) -> None:
-        # 错误汇报与正常回复同一条原则：既然轮次已经跑了，结果必须送达，
-        # 不再过 generation/醒睡闸。
-        allowed = True
+        # 内部失败文本（守卫停机报告、异常明细）绝不原样进群——群友看不懂
+        # "任务未完成：自动执行后仍没有得到可验证结果"。失败作为下一轮输入
+        # 交给 agent，由它用自己的话告诉用户（或判断为内部噪音而静默）。
+        # 防循环：纠正轮本身失败时只记录，不再派生新的纠正轮。
         record_robot_event(
             str(job.robot_id),
             direction="backend_worker",
@@ -1399,27 +1400,44 @@ class RobotService:
                 "queue": self.dispatch_queue_snapshot(),
             },
         )
-        delivered = False
-        if allowed:
+        is_corrective = job.route_key == "dispatch_error_corrective"
+        if not is_corrective:
             try:
-                from .bridge_client import robot_bridge_client
-
-                robot_bridge_client.send_message(job.robot_id, job.reply_target, message)
+                with Session(engine) as session:
+                    robot = session.get(Robot, job.robot_id)
+                if robot is not None and robot.is_enabled:
+                    self._record_pending_chat_input(
+                        robot=robot,
+                        conversation_key=job.conversation_key,
+                        item_id=job.item_id,
+                        route_key="dispatch_error_corrective",
+                        message_text=(
+                            "[系统] 上一轮处理失败，详情："
+                            f"{str(message)[:300]}。"
+                            "如果用戶在等结果，用你自己的话如实告知这事没办成"
+                            "（别说内部术语）；如果用户在忙别的事没等这个，静默即可"
+                            "（输出 [no_qq_reply]）。"
+                        ),
+                        sender_key=job.sender_key,
+                        sender_label="system",
+                        trigger_reason="dispatch_error_corrective",
+                        reply_target=job.reply_target,
+                    )
+                    self._enqueue_pending_chat_followup(
+                        robot=robot,
+                        conversation_key=job.conversation_key,
+                    )
             except Exception:
                 logger.exception(
-                    "[RobotService] Failed to send queued dispatch error robot=%s",
+                    "[RobotService] Failed to queue corrective turn after dispatch error: robot=%s",
                     job.robot_id,
                 )
-            else:
-                delivered = True
         self._clear_reply_context_window_for_key(
             job.robot_id,
             job.conversation_key,
             reason="dispatch_error",
             expected_generation=job.conversation_generation or None,
         )
-        if delivered:
-            self._remember_assistant_conversation_memory(job.robot_id, job.conversation_key, message)
 
     def handle_inbound_message(
         self,

@@ -172,8 +172,11 @@ class RobotMCPServer:
                     "broadcast": {
                         "type": "boolean",
                         "description": (
-                            "Deprecated. Broadcast from prior chat history is blocked "
-                            "to prevent replying to the wrong QQ conversation."
+                            "Deprecated, always blocked: unbounded broadcast to "
+                            "unknown destinations. NOTE this has nothing to do with "
+                            "sending the same announcement to several of YOUR groups - "
+                            "that is normal and expected: use the targets array (or one "
+                            "send per group) when the user asks for it."
                         ),
                     },
                     "targets": {
@@ -192,8 +195,11 @@ class RobotMCPServer:
                         "minItems": 1,
                         "maxItems": 10,
                         "description": (
-                            "Backend chat only: send the same text/messages once "
-                            "to each listed target in this single call. Do not "
+                            "Send the same text/messages once to each listed "
+                            "target in this single call - the way to announce "
+                            "something to multiple/all of your groups when the "
+                            "user asks ('跟所有群说一声'). Every target must be a "
+                            "verified contact (from list_contacts). Do not "
                             "combine with other target parameters. Result reports "
                             "one status line per target."
                         ),
@@ -1044,7 +1050,9 @@ class RobotMCPServer:
             f"conversation ({active_label}), omit reply_to/conversation/target_type/"
             "target_id. To reach another group or friend, call list_contacts "
             "first and pick the target from your actual contact list - contacts "
-            "you can see there are unlocked for sending. Broadcast is not allowed."
+            "you can see there are unlocked for sending. The broadcast flag is "
+            "blocked, but multi-send to your own groups via the targets array "
+            "is normal and expected when the user asks."
         )
 
         known = list(known_targets or [])

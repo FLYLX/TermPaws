@@ -38,7 +38,12 @@ class AgentInputBridge:
             return False
         if item and item.input_filter_enabled:
             return False
-        if not is_critical_terminal_event(raw_output):
+        if is_critical_terminal_event(raw_output):
+            return False
+        # 有 handler 负责的终端：agent 的工作对象就是它，输出是它的眼睛——
+        # 按冷却放行非严重输出，而不是"仅严重事件可见"让它变瞎。
+        # 无 handler 的终端维持抑制（没人在看，别烧 token）。
+        if not self._load_handler_id(item_uuid):
             return True
         now = time.monotonic()
         last = self._last_unsolicited_turn_at.get(item_uuid, 0.0)
@@ -108,10 +113,20 @@ class AgentInputBridge:
             )
 
     def _load_handler_id(self, item_uuid: str) -> str | None:
+        import uuid as _uuid
+
+        try:
+            item_key = _uuid.UUID(str(item_uuid))
+        except (TypeError, ValueError):
+            item_key = str(item_uuid)
         with Session(engine) as session:
             handler_item = session.exec(
-                select(ItemHandlerItem).where(ItemHandlerItem.item_id == item_uuid)
+                select(ItemHandlerItem).where(ItemHandlerItem.item_id == item_key)
             ).first()
+            if handler_item is None and item_key is not item_uuid:
+                handler_item = session.exec(
+                    select(ItemHandlerItem).where(ItemHandlerItem.item_id == item_uuid)
+                ).first()
             if handler_item:
                 return str(handler_item.item_handler_id)
         return None

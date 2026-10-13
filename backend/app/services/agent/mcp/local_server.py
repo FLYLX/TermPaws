@@ -1057,15 +1057,25 @@ class LocalMCPServer:
         # it would be misattributed.
         ticket = reply_ticket_manager.get(reply_ticket_id) if reply_ticket_id else None
         if ticket is None:
-            return [
-                {
-                    "type": "text",
-                    "text": (
-                        "Error: 无法关联 ticket（reply ticket 不存在或已失效），"
-                        "plan 未保存。请先继续当前任务，必要时重新发起。"
-                    ),
-                }
-            ]
+            # 票据 TTL 到期是常态（6h），任务链不该跟着死：续一张新票并把
+            # 旧 id 设成别名——后续带旧票据号的调用继续工作，plan 得以续写。
+            try:
+                ticket = reply_ticket_manager.create_detached(
+                    item_id=item_id,
+                    handler_id=self._memory_scope(item_id),
+                    message="plan continuation",
+                    alias_of=reply_ticket_id,
+                )
+            except Exception as exc:
+                return [
+                    {
+                        "type": "text",
+                        "text": (
+                            f"Error: 无法关联 ticket 且续期失败（{exc}），"
+                            "plan 未保存。请重新发起任务。"
+                        ),
+                    }
+                ]
         if ticket.plan_cancelled:
             return [
                 {

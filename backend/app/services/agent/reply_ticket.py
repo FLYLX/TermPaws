@@ -458,6 +458,35 @@ class ReplyTicketManager:
         _persist_ticket(ticket)
         return ticket
 
+    def create_detached(
+        self,
+        *,
+        item_id: str,
+        handler_id: str,
+        message: str = "",
+        alias_of: str = "",
+    ) -> ReplyTicket:
+        """Agent-free ticket for flows that outlive their original ticket
+        (plans, job chains). When alias_of is given, lookups of the dead
+        ticket id resolve to the new one, so in-flight tool args keep working."""
+        now = datetime.now()
+        ticket = ReplyTicket(
+            ticket_id=uuid.uuid4().hex,
+            item_id=str(item_id),
+            handler_id=str(handler_id),
+            source_type=SOURCE_WEB,
+            source_label="ticket renewal",
+            request_message=str(message or "").strip()[:500],
+        )
+        with self._lock:
+            self._prune_locked(now)
+            self._tickets[ticket.ticket_id] = ticket
+            if alias_of:
+                self._ticket_aliases[str(alias_of)] = ticket.ticket_id
+                _persist_aliases(self._ticket_aliases)
+        _persist_ticket(ticket)
+        return ticket
+
     def create_for_scheduled_task(
         self,
         agent: Any,

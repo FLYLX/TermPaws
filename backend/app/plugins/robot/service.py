@@ -725,9 +725,11 @@ class RobotService:
                             input_type=InputType.CHAT,
                             content=(
                                 "[Internal plan resume]\n"
-                                f"当前任务计划还有未完成步骤：{'; '.join(open_steps) or '见计划'}。"
-                                "不要总结、不要表态，立即调用工具继续执行当前步骤；"
-                                "每完成一步用 mcp_local_update_plan 更新状态，全部完成后才总结。"
+                                f"当前任务计划还有未完成步骤：{'; '.join(open_steps) or '见计划'}。\n"
+                                "先核对现实：如果这些步骤的工作实际上已经完成（任务结果你已经见过），"
+                                "不要再执行——直接用 mcp_local_update_plan 把剩余步骤全部标为 completed"
+                                "（计划会自动关闭），然后向用户汇报最终结果；"
+                                "只有确实没做完的步骤才继续执行，每完成一步用 update_plan 更新状态。"
                             ),
                             raw_content="",
                             query="resume plan",

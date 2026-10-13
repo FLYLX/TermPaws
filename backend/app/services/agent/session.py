@@ -2758,9 +2758,10 @@ class AgentSession:
                             {
                                 "role": "system",
                                 "content": (
-                                    "当前计划还有未完成步骤。不要总结、不要表态，"
-                                    "立即调用工具继续执行当前 in_progress/pending 步骤；"
-                                    "每完成一步用 mcp_local_update_plan 更新状态，全部完成后才总结收尾。"
+                                    "当前计划还有未完成步骤。先核对现实：如果这些步骤的工作实际上已经完成，"
+                                    "不要再执行——用 mcp_local_update_plan 把剩余步骤全部标为 completed"
+                                    "（计划会自动关闭），然后总结收尾；"
+                                    "只有确实没做完的步骤才继续执行，每完成一步用 update_plan 更新状态。"
                                 ),
                             }
                         )

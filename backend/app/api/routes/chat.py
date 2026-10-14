@@ -1122,6 +1122,8 @@ def _generate_stream_unserialized(
     thinking_only_retry_used = False
     plan_continuation_count = 0
     robot_final_text_retry_used = False
+    plan_open_at_turn_start = _ticket_has_open_plan_steps(reply_ticket.ticket_id)
+    plan_report_nudge_used = False
     from app.core.config import settings as chat_settings
 
     turn_started_at = time.monotonic()
@@ -1385,6 +1387,30 @@ def _generate_stream_unserialized(
                                 "不要再执行——用 mcp_local_update_plan 把剩余步骤全部标为 completed"
                                 "（计划会自动关闭），然后总结收尾；"
                                 "只有确实没做完的步骤才继续执行，每完成一步用 update_plan 更新状态。"
+                            ),
+                        }
+                    )
+                    continue
+                # 计划在本轮刚收尾但用户还没收到结果：推一次让 agent 汇报，
+                # 不然"活干完了没吱声"（远端实测：巡检续跑把活干完但没人告诉用户）。
+                if (
+                    plan_open_at_turn_start
+                    and not plan_report_nudge_used
+                    and not finalization_only
+                    and not _ticket_has_open_plan_steps(reply_ticket.ticket_id)
+                    and not (delivery_tool_sent_by_integration or qq_message_sent_this_turn)
+                    and normalized_source_type == SOURCE_QQ
+                ):
+                    plan_report_nudge_used = True
+                    messages.append({"role": "assistant", "content": iteration_content})
+                    messages.append(
+                        {
+                            "role": "system",
+                            "content": (
+                                "计划已全部完成，但用户还没收到结果。现在用 "
+                                "mcp_robot_send_message 把最终结果发给用户（发到它该在的"
+                                "群/会话，显式带 target_type+target_id），发完返回 "
+                                "[no_qq_reply]。"
                             ),
                         }
                     )

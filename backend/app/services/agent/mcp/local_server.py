@@ -101,7 +101,9 @@ def _format_background_job_results_batch(entries: list[dict[str, Any]]) -> str:
             lines.append(f"   error: {str(result.get('error'))[:300]}")
     lines.append(
         "If a plan is active, sync it via mcp_local_update_plan (mark completed "
-        "steps, start next, or clear when all done). Then verify and report."
+        "steps, start next, or clear when all done). Then report. 只在结果本身"
+        "还没证明结论时才需要再跑验证命令——结果已经证明了就直接汇报，"
+        "同一个结论不要重复验证。"
     )
     return "\n".join(lines)
 

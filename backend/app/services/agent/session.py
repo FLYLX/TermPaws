@@ -3532,6 +3532,14 @@ class AgentSession:
             result_text = self._format_tool_result(result).strip()
             robot_delivery_result = self._is_successful_robot_send(
                 tool_name, result_text
+            ) or (
+                tool_name == ROBOT_SEND_TOOL_NAME
+                and isinstance(result, dict)
+                and isinstance(result.get("result"), list)
+                and any(
+                    isinstance(item, dict) and bool(item.get("qq_delivered"))
+                    for item in result["result"]
+                )
             )
             if (
                 tool_results_sink is not None
@@ -3562,14 +3570,8 @@ class AgentSession:
                         reply_ticket_id,
                     )
 
-                self.emit_output(
-                    robot_reply_event_content(tool_args, result_text),
-                    ROBOT_QQ_REPLY_EVENT_TYPE,
-                    {
-                        "tool_name": tool_name,
-                        "qq_delivery": True,
-                    },
-                )
+                # 前端时间线事件由发送函数自己落（_emit_qq_reply_timeline），
+                # 这里不再按结果文本重复生成。
                 # Report sent -- stop the turn immediately to prevent
                 # duplicate reports.
                 return None

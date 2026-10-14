@@ -287,6 +287,18 @@ def build_system_prompt_with_skills(
     return "\n".join(parts), matched_skills, tools
 
 
+def _result_has_qq_delivery_metadata(result: Any) -> bool:
+    if not isinstance(result, dict) or not result.get("success"):
+        return False
+    result_data = result.get("result")
+    if not isinstance(result_data, list):
+        return False
+    return any(
+        isinstance(item, dict) and bool(item.get("qq_delivered"))
+        for item in result_data
+    )
+
+
 def _to_sse(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
@@ -1724,7 +1736,10 @@ def _generate_stream_unserialized(
                 )
                 if command_dispatch_pending or is_background_job_started_result(result):
                     pending_async_delivery = True
-                if result_text and fallback_is_delivery_result(result_text):
+                # 送达信号优先读结果里的结构化元数据（发送函数自己标记的），
+                # 文本前缀识别只是兼容旧结果的兜底——回执文案再改也不会断供。
+                _qq_delivered_meta = _result_has_qq_delivery_metadata(result)
+                if result_text and (_qq_delivered_meta or fallback_is_delivery_result(result_text)):
                     if tool_name == ROBOT_SEND_TOOL_NAME:
                         confirmed_external_delivery_to_qq = True
                         qq_message_sent_this_turn = True
@@ -1732,23 +1747,8 @@ def _generate_stream_unserialized(
                     reply_ticket_manager.mark_delivered(
                         reply_ticket.ticket_id
                     )
-                    if tool_name == ROBOT_SEND_TOOL_NAME:
-                        reply_event = _persist_and_broadcast_event(
-                            item_id,
-                            role="assistant",
-                            content=robot_reply_event_content(tool_args, result_text),
-                            message_type=ROBOT_QQ_REPLY_EVENT_TYPE,
-                            extra={
-                                "tool_name": tool_name,
-                                "qq_delivery": True,
-                            },
-                        )
-                        yield _to_sse(reply_event)
-                        # No early return here: the agent continues the turn,
-                        # delivers any remaining targets, and ends the task by
-                        # reporting (or NRN) on its own. Duplicate delivery is
-                        # already prevented by ticket.external_report_sent plus
-                        # final-response suppression — not by cutting the turn.
+                    # 前端时间线事件由发送函数自己落（_emit_qq_reply_timeline），
+                    # 这里不再按结果文本重复生成。
 
                 if result_text and not command_dispatch_pending:
                     if hide_tool_details:

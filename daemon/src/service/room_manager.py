@@ -28,6 +28,15 @@ class ItemRoom:
         """添加订阅者"""
         with self.lock:
             if subscriber.type == "backend":
+                # 一个 room 只认一条 backend 订阅：新 backend 进来时清掉旧的
+                # （旧的多半是断连僵尸——backend 重启/重连后旧连接没被及时移除，
+                # 留着会让每条输出被多个 backend 通道各转一份，日志重复 ×N）。
+                zombies = [sid for sid in self.permanent_subscribers if sid != subscriber.sid]
+                for sid in zombies:
+                    self.permanent_subscribers.pop(sid)
+                    logger.warning(
+                        f"[Room {self.room_id}] Evicted stale backend subscriber {sid[:16]}... (replaced by {subscriber.sid[:16]}...)"
+                    )
                 self.permanent_subscribers[subscriber.sid] = subscriber
                 logger.info(f"[Room {self.room_id}] Added permanent subscriber: {subscriber.sid[:16]}...")
             else:

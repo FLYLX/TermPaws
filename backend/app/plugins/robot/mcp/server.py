@@ -1429,6 +1429,54 @@ class RobotMCPServer:
             sent_messages.append(message)
         return sent_messages
 
+    @staticmethod
+    def _qq_delivery_metadata(
+        target: RobotReplyTarget, label: str, sent_messages: list[str]
+    ) -> dict:
+        """送达信号是结构化元数据，不是结果文本的前缀——文本随便改，
+        下游（轮次状态、前端时间线）不用再靠认字符串。"""
+        return {
+            "type": "metadata",
+            "qq_delivered": True,
+            "target_type": str(target.target_type or ""),
+            "target_id": str(target.target_id or ""),
+            "target_label": label,
+            "bubble_count": len(sent_messages),
+        }
+
+    def _emit_qq_reply_timeline(
+        self,
+        *,
+        item_id: str,
+        robot_id: str,
+        target: RobotReplyTarget,
+        sent_messages: list[str],
+    ) -> None:
+        """发送函数顺便渲染前端：送达即落一条时间线事件（agent_qq_reply），
+        不等下游识别结果文本。"""
+        item_id = str(item_id or "").strip()
+        if not item_id or not sent_messages:
+            return
+        try:
+            from app.services.agent.history.chat import append_chat_message
+            from app.services.agent.robot_delivery import ROBOT_QQ_REPLY_EVENT_TYPE
+            from app.services.agent.stream_manager import stream_manager
+
+            label = self._target_label(robot_id, target)
+            content = f"已回复 QQ【{label}】：" + " / ".join(
+                str(m)[:80] for m in sent_messages[:5]
+            )
+            event = append_chat_message(
+                item_id,
+                role="assistant",
+                content=content,
+                message_type=ROBOT_QQ_REPLY_EVENT_TYPE,
+                extra={"qq_delivery": True},
+            )
+            stream_manager.broadcast_chat_event(item_id, event)
+        except Exception:
+            logger.debug("[RobotMCPServer] qq reply timeline emit failed", exc_info=True)
+
     def _send_explicit_targets(
         self,
         *,
@@ -1478,6 +1526,19 @@ class RobotMCPServer:
             report_lines.append(f"sent: {label}")
         for target, sent_messages in delivered:
             self._remember_sent_messages(robot_id, target, sent_messages, args=args)
+            _label = self._target_label(robot_id, target)
+            self._emit_qq_reply_timeline(
+                item_id=str(args.get("_TermPaws_item_id") or ""),
+                robot_id=robot_id,
+                target=target,
+                sent_messages=sent_messages,
+            )
+        _metadata = [
+            self._qq_delivery_metadata(
+                target, self._target_label(robot_id, target), sent_messages
+            )
+            for target, sent_messages in delivered
+        ]
         return [
             {
                 "type": "text",
@@ -1485,7 +1546,8 @@ class RobotMCPServer:
                     f"Multi-target QQ send to {len(targets)} target(s):\n"
                     + "\n".join(report_lines)
                 ),
-            }
+            },
+            *_metadata,
         ]
 
     @staticmethod
@@ -2862,11 +2924,31 @@ class RobotMCPServer:
                     text=text,
                     context=context,
                 )
+                _meta = []
+                for _t in sent:
+                    _label = self._target_label(
+                        str(_t.get("robot_id") or ""), 
+                        RobotReplyTarget(
+                            target_type=str(_t.get("target_type") or ""),
+                            target_id=str(_t.get("target_id") or ""),
+                        ),
+                    )
+                    _meta.append(
+                        self._qq_delivery_metadata(
+                            RobotReplyTarget(
+                                target_type=str(_t.get("target_type") or ""),
+                                target_id=str(_t.get("target_id") or ""),
+                            ),
+                            _label,
+                            [text] if text else [],
+                        )
+                    )
                 return [
                     {
                         "type": "text",
                         "text": f"Broadcast sent to {len(sent)} QQ conversation(s).",
-                    }
+                    },
+                    *_meta,
                 ]
 
             if explicit_target is not None:
@@ -2905,11 +2987,19 @@ class RobotMCPServer:
                 form_note = self._bubble_form_feedback(messages)
                 if form_note:
                     result_text += f"\n{form_note}"
+                _label = self._target_label(robot_id, explicit_target)
+                self._emit_qq_reply_timeline(
+                    item_id=str(args.get("_TermPaws_item_id") or ""),
+                    robot_id=robot_id,
+                    target=explicit_target,
+                    sent_messages=sent_messages,
+                )
                 return [
                     {
                         "type": "text",
                         "text": result_text,
-                    }
+                    },
+                    self._qq_delivery_metadata(explicit_target, _label, sent_messages),
                 ]
 
             if context_target is not None:
@@ -2937,14 +3027,22 @@ class RobotMCPServer:
                     messages,
                 )
                 self._remember_sent_messages(robot_id, context_target, sent_messages, args=args)
+                _label = self._target_label(robot_id, context_target)
+                self._emit_qq_reply_timeline(
+                    item_id=str(args.get("_TermPaws_item_id") or ""),
+                    robot_id=robot_id,
+                    target=context_target,
+                    sent_messages=sent_messages,
+                )
                 return [
                     {
                         "type": "text",
                         "text": (
                             f"Message sent to QQ {context_target.target_type} "
-                            f"{self._target_label(robot_id, context_target)} from chat context."
+                            f"{_label} from chat context."
                         ),
-                    }
+                    },
+                    self._qq_delivery_metadata(context_target, _label, sent_messages),
                 ]
 
             if context is None:

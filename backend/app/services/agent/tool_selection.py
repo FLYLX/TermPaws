@@ -48,6 +48,22 @@ TERMINAL_TOOLSET = frozenset(
     }
 )
 
+# 干活主力工具（执行/后台任务/查状态/读日志/打断）：QQ/web 回合也直接挂载。
+# 让它们走 prepare_capabilities 按需加载的代价是：每个任务轮先烧 1-2 次
+# 迭代加载工具，flash 模型经常在加载完之前就耗尽迭代或走丢——简单任务
+# 死在起跑线上。过滤规则管理类保持按需加载。
+TERMINAL_WORK_TOOLSET = frozenset(
+    {
+        "mcp_local_execute_command",
+        "mcp_local_run_job",
+        "mcp_local_list_jobs",
+        "mcp_local_cancel_job",
+        "mcp_local_interrupt_command",
+        "mcp_local_get_terminal_status",
+        "mcp_local_read_terminal_log",
+    }
+)
+
 TERMINAL_GUIDE_IDS = ("terminal_mcp", "minecraft_server_helper")
 
 _GUIDE_EXCLUDED_CATEGORIES = {"system", "persona"}
@@ -88,6 +104,9 @@ def select_tools_for_turn(
     loaded = get_loaded_tools(item_id) if item_id else frozenset()
     if source == "terminal":
         loaded = loaded | TERMINAL_TOOLSET
+    elif item_id:
+        # QQ/web 回合直接挂载干活主力工具（见 TERMINAL_WORK_TOOLSET 注释）。
+        loaded = loaded | TERMINAL_WORK_TOOLSET
 
     selected: list[dict[str, Any]] = []
     seen: set[str] = set()

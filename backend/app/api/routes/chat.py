@@ -1441,36 +1441,38 @@ def _generate_stream_unserialized(
                     final_response,
                     called_tool_sequence,
                 )
+                # QQ 轮次里发送工具是唯一出口，最终文本不会送达。
+                # 两种形态都纠偏一次：(a) 发过几条但把后续写进了最终文本
+                # （长故事断尾的根因）；(b) 什么都没发，直接把答复写成最终文本
+                # （回调轮"改好啦"没进群的根因）。web 不受影响：最终文本就是回复。
+                try:
+                    from app.plugins.robot.reply_intent import is_no_reply_intent
+                except Exception:
+                    is_no_reply_intent = None
+                if (
+                    normalized_source_type == SOURCE_QQ
+                    and not robot_final_text_retry_used
+                    and not finalization_only
+                    and final_response.strip()
+                    and is_no_reply_intent is not None
+                    and not is_no_reply_intent(final_response)
+                ):
+                    robot_final_text_retry_used = True
+                    messages.append({"role": "assistant", "content": iteration_content})
+                    messages.append(
+                        {
+                            "role": "system",
+                            "content": (
+                                "你上一条文本不会送达用户——QQ 回复的唯一出口是 "
+                                "mcp_robot_send_message。如果那是要给用户的内容，"
+                                "现在用发送工具把它发出去（显式带 target_type+target_id，"
+                                "一条气泡一次调用，发完为止）；"
+                                "如果确实没有什么要发给用户，只返回 [no_qq_reply]。"
+                            ),
+                        }
+                    )
+                    continue
                 if delivery_tool_sent_by_integration or qq_message_sent_this_turn:
-                    # QQ 轮次里发送工具是唯一出口，最终文本不会送达。
-                    # 模型把没说完的内容写进最终文本时（常见于长故事/长列表
-                    # 逐条气泡发送的中途收尾），纠偏一次让它用工具发完，
-                    # 而不是静默丢弃——这是长回复"讲一半断了"的主因。
-                    try:
-                        from app.plugins.robot.reply_intent import is_no_reply_intent
-                    except Exception:
-                        is_no_reply_intent = None
-                    if (
-                        not robot_final_text_retry_used
-                        and not finalization_only
-                        and final_response.strip()
-                        and is_no_reply_intent is not None
-                        and not is_no_reply_intent(final_response)
-                    ):
-                        robot_final_text_retry_used = True
-                        messages.append({"role": "assistant", "content": iteration_content})
-                        messages.append(
-                            {
-                                "role": "system",
-                                "content": (
-                                    "你上一条文本不会送达用户——QQ 回复的唯一出口是 "
-                                    "mcp_robot_send_message。如果那是你还没说完的内容，"
-                                    "现在用发送工具把它发出去（一条气泡一次调用，发完为止）；"
-                                    "如果确实已经全部说完了，只返回 [no_qq_reply]。"
-                                ),
-                            }
-                        )
-                        continue
                     logger.info(
                         "[Chat] Suppressed final response after source delivery tool sent for item %s",
                         item_id,

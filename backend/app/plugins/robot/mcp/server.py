@@ -3079,7 +3079,17 @@ class RobotMCPServer:
                     status="error",
                     error=str(exc),
                 )
-            return [{"type": "text", "text": f"Error: {exc}"}]
+            return [
+                {
+                    "type": "text",
+                    "text": (
+                        f"发送失败（通道侧错误）：{exc}。"
+                        "机器人到 QQ 的通道当前不可用。不要连续重试同一条内容"
+                        "（重试也没用还刷屏）。先告诉用户一句现在发不出去，"
+                        "过一会儿再试，或者等通道恢复。"
+                    ),
+                }
+            ]
 
     def list_tools(self) -> list[dict]:
         return [

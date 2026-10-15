@@ -215,7 +215,8 @@ def test_robot_mcp_send_failure_allows_retry(monkeypatch) -> None:
     finally:
         unregister_robot_mcp_context(token)
 
-    assert first[0]["text"] == "Error: bridge down"
+    assert first[0]["text"].startswith("发送失败")
+    assert "bridge down" in first[0]["text"]
     assert second[0]["text"].startswith("已送达【")
     assert sent == ["失败后重试"]
 

@@ -3119,3 +3119,29 @@ def test_session_consumer_wake_when_alive_but_idle() -> None:
         session._consumer_shutdown = True
         session._wake_event.set()
         session._consumer_thread.join(timeout=5)
+
+
+def test_turn_groups_split_by_reply_route() -> None:
+    """web/?A/?B/???????????????????????"""
+    from app.services.agent.session import AgentSession, InputType
+
+    class _Msg:
+        def __init__(self, input_type, source_label):
+            self.input_type = input_type
+            self.source_label = source_label
+
+    web = _Msg(InputType.CHAT, "web ??")
+    qa1 = _Msg(InputType.CHAT, "QQ group:1001")
+    qa2 = _Msg(InputType.CHAT, "QQ group:1001")
+    qb = _Msg(InputType.CHAT, "QQ group:1002")
+    resume = _Msg(InputType.CHAT, "plan-resume group:1001")
+    term = _Msg(InputType.TERMINAL, "")
+
+    groups = AgentSession._group_batch_by_route(
+        AgentSession.__new__(AgentSession), [web, qa1, qb, qa2, resume, term]
+    )
+    assert [len(g) for g in groups] == [1, 3, 1, 1]
+    assert qa1 in groups[1] and qa2 in groups[1] and resume in groups[1]
+    assert groups[0] == [web]
+    assert groups[2] == [qb]
+    assert groups[3] == [term]

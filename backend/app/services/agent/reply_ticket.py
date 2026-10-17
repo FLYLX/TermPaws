@@ -28,6 +28,9 @@ QQ_TICKET_FIRST_TURN_GRACE_SECONDS = 240.0
 # 同一票据的 plan resume 上限：模型一直不收尾时熔断，防止旧意图被无限
 # 复活重跑（用户的纠正消息生成的是新票据，不受此限制）。
 MAX_PLAN_RESUMES_PER_TICKET = 8
+
+# 汇报欠账提醒的保质期（秒）：超过之后视为噪音不再注入 prompt。
+REPORT_DEBT_TTL_SECONDS = 2 * 3600
 CURRENT_QQ_MESSAGE_MARKER = "[Current QQ message]"
 CQ_CODE_RE = re.compile(r"\[CQ:[^\]]+\]", re.IGNORECASE)
 
@@ -824,6 +827,50 @@ class ReplyTicketManager:
             _persist_ticket(ticket)
             return ticket.resume_count
 
+    def settle_conversation_debts(
+        self, *, target_type: str, target_id: str
+    ) -> int:
+        """某会话刚刚有消息送达后，核销该会话的历史欠账。
+
+        欠账（未送达标记/接管债务）的意义是提醒模型"这个会话还等结论"。
+        模型每轮都能看到欠账清单——它向该会话发出任何新消息时已经有机会
+        覆盖旧账；不核销的话旧账永远挂着，模型会拿无关的新内容去还。
+        纯路由匹配，不看内容。返回核销条数。
+        """
+        settled = 0
+        with self._lock:
+            for ticket in self._tickets.values():
+                if ticket.report_undelivered and ticket.is_qq:
+                    rt = ticket.reply_target or {}
+                    if (
+                        str(rt.get("target_type") or "") == str(target_type)
+                        and str(rt.get("target_id") or "") == str(target_id)
+                    ):
+                        ticket.report_undelivered = False
+                        ticket.action_ledger = (
+                            ticket.action_ledger
+                            + ["会话已有新消息送达，旧欠账核销"]
+                        )[-12:]
+                        ticket.updated_at = datetime.now()
+                        _persist_ticket(ticket)
+                        settled += 1
+                if ticket.inherited_debts:
+                    remaining = [
+                        d
+                        for d in ticket.inherited_debts
+                        if not (
+                            str(d.get("target_type") or "") == str(target_type)
+                            and str(d.get("target_id") or "") == str(target_id)
+                        )
+                    ]
+                    if len(remaining) != len(ticket.inherited_debts):
+                        settled += len(ticket.inherited_debts) - len(remaining)
+                        ticket.inherited_debts = remaining
+                        ticket.updated_at = datetime.now()
+                        _persist_ticket(ticket)
+        return settled
+
+
     def latest_plan_for_item(
         self, item_id: str
     ) -> tuple[ReplyTicket | None, list[dict]]:
@@ -1071,11 +1118,16 @@ class ReplyTicketManager:
         - open_task：QQ 票据任务在跑且尚未向来源汇报（合并轮次里提醒各回各家）。
         """
         debts: list[dict[str, Any]] = []
+        now = datetime.now()
         with self._lock:
             tickets = [
                 t for t in self._tickets.values() if t.item_id == str(item_id)
             ]
             for ticket in tickets:
+                # 欠账也有保质期：超过 2 小时还没核销的提醒只是噪音
+                # （该会话多半早已从别的轮次拿到结论）。
+                if (now - ticket.updated_at).total_seconds() > REPORT_DEBT_TTL_SECONDS:
+                    continue
                 if ticket.report_undelivered and ticket.is_qq:
                     debts.append({
                         "kind": "undelivered",
@@ -1223,6 +1275,8 @@ class ReplyTicketManager:
                 "Reply directly in this web response.\n"
                 "- If the user asks you to send a message to QQ or elsewhere, perform "
                 "that action, then report the outcome here in web chat.\n"
+                "- 用户没明说发到 QQ，就绝不主动调用 QQ 发送工具——共享历史里其它"
+                "渠道的任务和欠账都不是你的汇报对象。\n"
             )
         return (
             "Authoritative reply ticket:\n"

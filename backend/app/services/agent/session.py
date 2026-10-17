@@ -2111,22 +2111,13 @@ class AgentSession:
                 if not batch:
                     continue
 
-                merged = batch[0] if len(batch) == 1 else self._merge_input_batch(batch)
-
-                self._begin_turn(merged)
-                process_error = ""
-                try:
-                    self._process_input(merged)
-                except Exception as exc:
-                    process_error = str(exc)
-                    logger.error(f"[AgentSession] Error processing queue: {exc}")
-                    self.emit_output(f"处理失败: {exc}", "agent_error")
-                finally:
-                    self._finish_turn()
-                    for msg in batch:
-                        self._notify_input_complete(msg, not process_error, process_error)
+                # 不同来源路由的输入不合并：web/群A/群B 各有各的回复路由，
+                # 揉成一轮会让模型只有一个"主票据"，把别的来源的结论发错
+                # 会话。按路由分组，同一路由（同一会话的连发）仍然合并。
+                for group in self._group_batch_by_route(batch):
+                    self._run_batch(group)
             except Exception:
-                # 循环体里任何一处（_begin_turn/合并/状态收尾）抛异常都不能
+                # 循环体里任何一处（分组/_begin_turn/状态收尾）抛异常都不能
                 # 弄死消费者线程——它一死，队列里的消息就永远没人处理。
                 logger.exception("[AgentSession] consumer iteration crashed; keeping loop alive")
                 with self.lock:
@@ -2135,6 +2126,47 @@ class AgentSession:
 
         with self.lock:
             self.state = SessionState.IDLE
+
+    @staticmethod
+    def _turn_group_key(msg: "InputMessage") -> tuple[str, str]:
+        """轮次分组键：纯路由信息，不看内容。同键输入才允许合并成一轮。"""
+        if msg.input_type != InputType.CHAT:
+            return ("other", str(msg.input_type))
+        label = str(msg.source_label or "")
+        if label.startswith("plan-resume "):
+            return ("chat", label[len("plan-resume "):])
+        if label.startswith("QQ "):
+            return ("chat", label[3:])
+        if label.startswith("web"):
+            return ("chat", "web")
+        return ("chat", label)
+
+    def _group_batch_by_route(self, batch: list["InputMessage"]) -> list[list["InputMessage"]]:
+        groups: dict[tuple[str, str], list[InputMessage]] = {}
+        order: list[tuple[str, str]] = []
+        for msg in batch:
+            key = self._turn_group_key(msg)
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append(msg)
+        return [groups[key] for key in order]
+
+    def _run_batch(self, batch: list[InputMessage]) -> None:
+        merged = batch[0] if len(batch) == 1 else self._merge_input_batch(batch)
+
+        self._begin_turn(merged)
+        process_error = ""
+        try:
+            self._process_input(merged)
+        except Exception as exc:
+            process_error = str(exc)
+            logger.error(f"[AgentSession] Error processing queue: {exc}")
+            self.emit_output(f"处理失败: {exc}", "agent_error")
+        finally:
+            self._finish_turn()
+            for msg in batch:
+                self._notify_input_complete(msg, not process_error, process_error)
 
     def ensure_consumer_alive(self) -> bool:
         """队列非空但消费者停摆时的自愈：线程死了就重启，活着就补 wake。
@@ -3154,9 +3186,21 @@ class AgentSession:
         # 未了结的 QQ 汇报义务：发送失败只在当时告知一次，票据被接管/合并
         # 后义务也可能跟着丢失。这里把结构上的欠账固定注入，由模型自己判断
         # 何时补回、回什么——系统不代发。
-        from app.services.agent.reply_ticket import reply_ticket_manager
+        # 只在 QQ 轮次注入：QQ 欠账只能由 QQ 轮次正确偿还；web 轮次看到
+        # 它只会诱发"拿当前任务内容去还旧账"的错发（实测发生过）。
+        report_debts: list[dict] = []
+        try:
+            agent = self.agent
+            robot_active = bool(
+                agent is not None
+                and str(getattr(getattr(agent, "_context", None), "robot_id", "") or "").strip()
+            )
+        except Exception:
+            robot_active = False
+        if robot_active:
+            from app.services.agent.reply_ticket import reply_ticket_manager
 
-        report_debts = reply_ticket_manager.pending_report_debts(self.item_id)
+            report_debts = reply_ticket_manager.pending_report_debts(self.item_id)
         for entry in report_debts[:5]:
             target = f"{entry.get('target_type')}:{entry.get('target_id')}"
             request = str(entry.get("request") or "")[:40]

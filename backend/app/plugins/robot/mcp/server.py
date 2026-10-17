@@ -1589,6 +1589,10 @@ class RobotMCPServer:
                         target_type=target.target_type,
                         target_id=target.target_id,
                     )
+                    reply_ticket_manager.settle_conversation_debts(
+                        target_type=target.target_type,
+                        target_id=target.target_id,
+                    )
                 except Exception:
                     pass
             _label = self._target_label(robot_id, target)
@@ -3000,6 +3004,10 @@ class RobotMCPServer:
                                 target_type=str(_t.get("target_type") or ""),
                                 target_id=str(_t.get("target_id") or ""),
                             )
+                            reply_ticket_manager.settle_conversation_debts(
+                                target_type=str(_t.get("target_type") or ""),
+                                target_id=str(_t.get("target_id") or ""),
+                            )
                     except Exception:
                         pass
                 _meta = []
@@ -3059,6 +3067,10 @@ class RobotMCPServer:
                         reply_ticket_manager.mark_report_delivered(_sent_ticket_id)
                         reply_ticket_manager.mark_debt_fulfilled(
                             _sent_ticket_id,
+                            target_type=explicit_target.target_type,
+                            target_id=explicit_target.target_id,
+                        )
+                        reply_ticket_manager.settle_conversation_debts(
                             target_type=explicit_target.target_type,
                             target_id=explicit_target.target_id,
                         )
@@ -3129,6 +3141,10 @@ class RobotMCPServer:
                         reply_ticket_manager.mark_report_delivered(_sent_ticket_id)
                         reply_ticket_manager.mark_debt_fulfilled(
                             _sent_ticket_id,
+                            target_type=context_target.target_type,
+                            target_id=context_target.target_id,
+                        )
+                        reply_ticket_manager.settle_conversation_debts(
                             target_type=context_target.target_type,
                             target_id=context_target.target_id,
                         )

@@ -817,6 +817,9 @@ class RobotAgentIntegration:
             "Plain final text is NOT auto-delivered. Do not leave answers only in TermPaws.\n"
             "- If the user asks you to send elsewhere, do it then report back here.\n"
             "- Do not duplicate: if already sent via tool, do not restate in final text.\n"
+            "- 共享会话历史里能看到其它渠道（web、其它 QQ 会话）的任务和汇报，"
+            "那些只是背景：它们的结果归各自渠道汇报，你不要代发；"
+            "本轮你只负责当前来源的内容。\n"
         )
 
     def memory_scope_rank(self, agent: Agent, memory: dict[str, Any]) -> int:

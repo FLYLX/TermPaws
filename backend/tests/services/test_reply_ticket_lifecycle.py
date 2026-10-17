@@ -1218,3 +1218,68 @@ def test_resume_count_bumps_and_persists() -> None:
         assert manager.bump_resume_count("missing") == 0
     finally:
         unregister_robot_mcp_context(token)
+
+
+def test_settle_conversation_debts_clears_by_route() -> None:
+    manager = ReplyTicketManager()
+    agent, token = _make_qq_agent_and_context(conversation_key="group:1001")
+    try:
+        ticket = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="task",
+            source_type="qq",
+        )
+        manager.mark_report_undelivered(ticket.ticket_id, "offline")
+        assert any(
+            d["kind"] == "undelivered"
+            for d in manager.pending_report_debts("item-1")
+        )
+        # ???????????
+        agent2, token2 = _make_qq_agent_and_context(
+            conversation_key="group:1002", user_id="2003"
+        )
+        try:
+            other = manager.create_for_agent(
+                agent2,
+                item_id="item-1",
+                handler_id="handler-1",
+                message="other task",
+                source_type="qq",
+            )
+            manager.mark_report_undelivered(other.ticket_id, "offline")
+
+            settled = manager.settle_conversation_debts(
+                target_type="group", target_id="1001"
+            )
+            assert settled == 1
+            assert ticket.report_undelivered is False
+            assert other.report_undelivered is True
+        finally:
+            unregister_robot_mcp_context(token2)
+    finally:
+        unregister_robot_mcp_context(token)
+
+
+def test_pending_report_debts_expire_after_ttl() -> None:
+    from app.services.agent.reply_ticket import REPORT_DEBT_TTL_SECONDS
+
+    manager = ReplyTicketManager()
+    agent, token = _make_qq_agent_and_context()
+    try:
+        ticket = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="old task",
+            source_type="qq",
+        )
+        manager.mark_report_undelivered(ticket.ticket_id, "offline")
+        assert manager.pending_report_debts("item-1")
+        ticket.updated_at = ticket.updated_at - timedelta(
+            seconds=REPORT_DEBT_TTL_SECONDS + 60
+        )
+        assert manager.pending_report_debts("item-1") == []
+    finally:
+        unregister_robot_mcp_context(token)

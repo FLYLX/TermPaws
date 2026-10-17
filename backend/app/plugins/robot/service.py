@@ -763,12 +763,24 @@ class RobotService:
                     }
                     setup_integration_chat_contexts(agent, contexts)
                 try:
+                    if is_robot_ticket:
+                        channel_hint = (
+                            f"本任务来源是 QQ 会话 {conversation_key}，"
+                            "汇报用 mcp_robot_send_message 显式发到该会话。"
+                        )
+                    else:
+                        channel_hint = (
+                            f"本任务来源是 {ticket.source_type or 'web'} 渠道"
+                            "（不是 QQ），结果只在该渠道回复，"
+                            "不要调用 QQ 发送工具发给任何群/私聊。"
+                        )
                     agent_session.process_input(
                         InputMessage(
                             input_type=InputType.CHAT,
                             content=(
                                 "[Internal plan resume]\n"
                                 f"当前任务计划还有未完成步骤：{'; '.join(open_steps) or '见计划'}。\n"
+                                + channel_hint + "\n"
                                 "先核对现实：如果这些步骤的工作实际上已经完成（任务结果你已经见过），"
                                 "不要再执行——直接用 mcp_local_update_plan 把剩余步骤全部标为 completed"
                                 "（计划会自动关闭），然后向用户汇报最终结果；"

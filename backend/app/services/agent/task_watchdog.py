@@ -185,6 +185,26 @@ def _dedupe_memory_clusters(now: datetime, stats: dict[str, int]) -> None:
             )
 
 
+def _kick_idle_sessions(stats: dict[str, int]) -> None:
+    """会话级兜底：队列有输入但消费者停摆（线程死亡/错过 wake）就拉起。
+
+    与内容无关的机械不变量——只要 input_queue 非空，就必须有活的消费者
+    在处理或马上开始处理。
+    """
+    from app.services.agent.session import agent_session_manager
+
+    with agent_session_manager._lock:
+        sessions = list(agent_session_manager._sessions.values())
+    for session in sessions:
+        try:
+            if session.ensure_consumer_alive():
+                stats["sessions_revived"] += 1
+        except Exception:
+            logger.exception(
+                "[TaskWatchdog] Failed to revive session item=%s", session.item_id
+            )
+
+
 def run_once(now: datetime | None = None) -> dict[str, int]:
     now = now or _utcnow()
     stats = {
@@ -192,7 +212,12 @@ def run_once(now: datetime | None = None) -> dict[str, int]:
         "stale_tickets_closed": 0,
         "dispatch_reaped": 0,
         "memories_deduplicated": 0,
+        "sessions_revived": 0,
     }
+    try:
+        _kick_idle_sessions(stats)
+    except Exception:
+        logger.exception("[TaskWatchdog] Session revive pass failed")
     try:
         _dedupe_memory_clusters(now, stats)
     except Exception:

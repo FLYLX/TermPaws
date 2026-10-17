@@ -3070,3 +3070,52 @@ def test_pending_integration_response_marks_tool_delivery_as_sent(monkeypatch) -
     )
     assert not session._send_pending_integration_response(pending, "重复总结")
     assert sent_contents == []
+
+
+def test_session_consumer_revived_when_dead_with_pending_input() -> None:
+    """??????????????????????????"""
+    import queue as _queue
+    import threading
+    import time as _time
+
+    from app.services.agent.session import AgentSession, InputMessage, InputType
+
+    session = AgentSession("item-revive-test", "handler-1")
+    try:
+        # ???????????????????
+        session._consumer_shutdown = True
+        session._wake_event.set()
+        session._consumer_thread.join(timeout=5)
+        assert not session._consumer_thread.is_alive()
+
+        session._consumer_shutdown = False
+        session.input_queue.put_nowait(
+            InputMessage(input_type=InputType.CHAT, content="hello", raw_content="hello")
+        )
+        assert session.ensure_consumer_alive() is True
+        assert session._consumer_thread.is_alive()
+    finally:
+        session._consumer_shutdown = True
+        session._wake_event.set()
+        session._consumer_thread.join(timeout=5)
+
+
+def test_session_consumer_wake_when_alive_but_idle() -> None:
+    """???????? wake?ensure_consumer_alive ?? wake???????"""
+    from app.services.agent.session import AgentSession, InputMessage, InputType
+
+    session = AgentSession("item-wake-test", "handler-1")
+    try:
+        original = session._consumer_thread
+        session.input_queue.put_nowait(
+            InputMessage(input_type=InputType.CHAT, content="hi", raw_content="hi")
+        )
+        assert session.ensure_consumer_alive() is True
+        assert session._consumer_thread is original
+        # ???????
+        session.input_queue.get_nowait()
+        assert session.ensure_consumer_alive() is False
+    finally:
+        session._consumer_shutdown = True
+        session._wake_event.set()
+        session._consumer_thread.join(timeout=5)

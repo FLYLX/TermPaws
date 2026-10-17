@@ -1095,3 +1095,41 @@ def test_young_qq_ticket_not_superseded_during_first_turn() -> None:
         assert newer3.inherited_debts == []
     finally:
         unregister_robot_mcp_context(token)
+
+
+def test_offroute_send_note_warns_when_target_not_in_turn_scope() -> None:
+    from app.plugins.robot.mcp.server import RobotMCPServer
+    from app.services.agent.reply_ticket import reply_ticket_manager as manager
+
+    server = RobotMCPServer.__new__(RobotMCPServer)
+    manager.reset()
+    agent, token = _make_qq_agent_and_context(conversation_key="group:1001")
+    try:
+        ticket = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="task for 1001",
+            source_type="qq",
+        )
+        manager.update_ticket_plan(
+            ticket.ticket_id, [{"step": "work", "status": "in_progress"}]
+        )
+        from app.plugins.robot.contracts import RobotReplyTarget
+
+        # ???????1001?????
+        on_route = server._offroute_send_note(
+            {"_reply_ticket_id": ticket.ticket_id, "_TermPaws_item_id": "item-1"},
+            RobotReplyTarget(target_type="group", target_id="1001"),
+        )
+        assert on_route == ""
+
+        # ???????1002????
+        off_route = server._offroute_send_note(
+            {"_reply_ticket_id": ticket.ticket_id, "_TermPaws_item_id": "item-1"},
+            RobotReplyTarget(target_type="group", target_id="1002"),
+        )
+        assert "1002" in off_route and "1001" in off_route
+    finally:
+        unregister_robot_mcp_context(token)
+        manager.reset()

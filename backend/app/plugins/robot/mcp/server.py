@@ -1386,6 +1386,58 @@ class RobotMCPServer:
             )
         return ""
 
+    def _offroute_send_note(self, args: dict, target: Any) -> str:
+        """发送目标与本轮来源/欠账清单对不上时的提醒（只提示，不拦截）。
+
+        合并轮次里模型偶尔会把 A 任务的结果发进 B 会话。这里把「本轮该回
+        谁」的事实摆在结果里，让模型自己判断是否误发并更正。用户明确要求
+        转发到某会话是合法场景——提示里说明可忽略。
+        """
+        try:
+            valid: set[tuple[str, str]] = set()
+            context_token = str(args.get("_robot_context_token") or "").strip()
+            context = get_robot_mcp_context(context_token) if context_token else None
+            if context is not None and getattr(context, "reply_target", None) is not None:
+                rt = context.reply_target
+                valid.add((str(rt.target_type), str(rt.target_id)))
+            ticket_id = str(args.get("_reply_ticket_id") or "").strip()
+            item_id = str(args.get("_TermPaws_item_id") or "").strip()
+            from app.services.agent.reply_ticket import reply_ticket_manager
+
+            if ticket_id:
+                ticket = reply_ticket_manager.get(ticket_id)
+                if ticket is not None:
+                    if isinstance(ticket.reply_target, dict) and ticket.reply_target.get("target_id"):
+                        valid.add((
+                            str(ticket.reply_target.get("target_type") or ""),
+                            str(ticket.reply_target.get("target_id") or ""),
+                        ))
+                    for extra in ticket.extra_targets or []:
+                        valid.add((
+                            str(extra.get("target_type") or ""),
+                            str(extra.get("target_id") or ""),
+                        ))
+            if item_id:
+                for debt in reply_ticket_manager.pending_report_debts(item_id):
+                    valid.add((
+                        str(debt.get("target_type") or ""),
+                        str(debt.get("target_id") or ""),
+                    ))
+            if not valid:
+                return ""
+            key = (str(target.target_type), str(target.target_id))
+            if key in valid:
+                return ""
+            expected = "、".join(f"{t}:{i}" for t, i in sorted(valid) if i)
+            return (
+                f"[路由提醒] 本次发送目标是 {target.target_type}:{target.target_id}，"
+                f"但本轮的来源/待回复清单是：{expected}。"
+                "如果刚才是误发（把别的任务的结论发错了会话），立刻向正确来源补发更正；"
+                "如果是用户明确要求的转发，忽略此提醒。"
+            )
+        except Exception:
+            return ""
+
     def _send_messages(
         self,
         bridge_client: Any,
@@ -3023,6 +3075,9 @@ class RobotMCPServer:
                     "如果话还没说完（比如故事讲到一半、列表没列完），继续调用本工具发下一条；"
                     "内容真正讲完才能结束本轮——提前收尾等于把话说到一半扔下用户。"
                 )
+                offroute_note = self._offroute_send_note(args, explicit_target)
+                if offroute_note:
+                    result_text += f"\n{offroute_note}"
                 form_note = self._bubble_form_feedback(messages)
                 if form_note:
                     result_text += f"\n{form_note}"

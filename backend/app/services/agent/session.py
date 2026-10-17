@@ -2076,57 +2076,91 @@ class AgentSession:
     def _consumer_loop(self):
         """Single consumer: wait for wake signal, drain queue, process one turn, repeat."""
         while not self._consumer_shutdown:
-            self._wake_event.wait(timeout=1.0)
-            self._wake_event.clear()
-
-            if self._consumer_shutdown:
-                break
-
-            batch: list[InputMessage] = []
             try:
-                first = self.input_queue.get(timeout=0.1)
-                batch.append(first)
-            except queue.Empty:
-                continue
-            while True:
-                try:
-                    batch.append(self.input_queue.get(timeout=0.3))
-                except queue.Empty:
+                self._wake_event.wait(timeout=1.0)
+                self._wake_event.clear()
+
+                if self._consumer_shutdown:
                     break
 
-            # 不按时间丢弃任何输入：队列上限（MAX_QUEUE_SIZE=20）就是唯一的
-            # 背压阀。终端刷屏由 _merge_terminal_queue_input 在入队时合并兜底，
-            # 用户消息无论排多久都必须被处理。
-            if not batch:
+                batch: list[InputMessage] = []
+                try:
+                    first = self.input_queue.get(timeout=0.1)
+                    batch.append(first)
+                except queue.Empty:
+                    continue
+                while True:
+                    try:
+                        batch.append(self.input_queue.get(timeout=0.3))
+                    except queue.Empty:
+                        break
+
+                # 不按时间丢弃任何输入：队列上限（MAX_QUEUE_SIZE=20）就是唯一的
+                # 背压阀。终端刷屏由 _merge_terminal_queue_input 在入队时合并兜底，
+                # 用户消息无论排多久都必须被处理。
+                if not batch:
+                    with self.lock:
+                        if self.input_queue.empty():
+                            self.state = SessionState.IDLE
+                            self._emit_idle_or_waiting_status(0)
+                    continue
+
+                # 过期的 plan-resume 输入直接丢弃：计划已被先前轮次跑完，
+                # 再执行只会让 agent 重新造计划、把已完成的任务重做一遍。
+                batch = [msg for msg in batch if not self._is_stale_plan_resume(msg)]
+                if not batch:
+                    continue
+
+                merged = batch[0] if len(batch) == 1 else self._merge_input_batch(batch)
+
+                self._begin_turn(merged)
+                process_error = ""
+                try:
+                    self._process_input(merged)
+                except Exception as exc:
+                    process_error = str(exc)
+                    logger.error(f"[AgentSession] Error processing queue: {exc}")
+                    self.emit_output(f"处理失败: {exc}", "agent_error")
+                finally:
+                    self._finish_turn()
+                    for msg in batch:
+                        self._notify_input_complete(msg, not process_error, process_error)
+            except Exception:
+                # 循环体里任何一处（_begin_turn/合并/状态收尾）抛异常都不能
+                # 弄死消费者线程——它一死，队列里的消息就永远没人处理。
+                logger.exception("[AgentSession] consumer iteration crashed; keeping loop alive")
                 with self.lock:
-                    if self.input_queue.empty():
+                    if self.state in {SessionState.RUNNING, SessionState.INTERRUPTING}:
                         self.state = SessionState.IDLE
-                        self._emit_idle_or_waiting_status(0)
-                continue
-
-            # 过期的 plan-resume 输入直接丢弃：计划已被先前轮次跑完，
-            # 再执行只会让 agent 重新造计划、把已完成的任务重做一遍。
-            batch = [msg for msg in batch if not self._is_stale_plan_resume(msg)]
-            if not batch:
-                continue
-
-            merged = batch[0] if len(batch) == 1 else self._merge_input_batch(batch)
-
-            self._begin_turn(merged)
-            process_error = ""
-            try:
-                self._process_input(merged)
-            except Exception as exc:
-                process_error = str(exc)
-                logger.error(f"[AgentSession] Error processing queue: {exc}")
-                self.emit_output(f"处理失败: {exc}", "agent_error")
-            finally:
-                self._finish_turn()
-                for msg in batch:
-                    self._notify_input_complete(msg, not process_error, process_error)
 
         with self.lock:
             self.state = SessionState.IDLE
+
+    def ensure_consumer_alive(self) -> bool:
+        """队列非空但消费者停摆时的自愈：线程死了就重启，活着就补 wake。
+
+        返回是否进行了干预。由 watchdog 每轮巡检调用，保证「队列有货 +
+        会话空闲」一定能启动下一轮。
+        """
+        if self._consumer_shutdown or self.input_queue.empty():
+            return False
+        with self.lock:
+            alive = self._consumer_thread.is_alive()
+            if not alive and not self._consumer_shutdown:
+                self._consumer_thread = threading.Thread(
+                    target=self._consumer_loop,
+                    daemon=True,
+                    name=f"agent-consumer-{self.item_id[:8]}",
+                )
+                self._consumer_thread.start()
+                logger.warning(
+                    "[AgentSession] consumer thread was dead with %d queued input(s); restarted for item=%s",
+                    self.input_queue.qsize(),
+                    self.item_id,
+                )
+                return True
+        self._wake_event.set()
+        return True
 
     def _is_stale_plan_resume(self, msg: InputMessage) -> bool:
         if not str(getattr(msg, "source_label", "") or "").startswith("plan-resume"):

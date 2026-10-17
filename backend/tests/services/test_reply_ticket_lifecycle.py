@@ -1194,3 +1194,27 @@ def test_watchdog_skips_ticket_whose_input_is_still_queued(monkeypatch) -> None:
         session._consumer_thread.join(timeout=5)
         unregister_robot_mcp_context(token)
         manager.reset()
+
+
+def test_resume_count_bumps_and_persists() -> None:
+    manager = ReplyTicketManager()
+    agent, token = _make_qq_agent_and_context()
+    try:
+        ticket = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="task",
+            source_type="qq",
+        )
+        for i in range(3):
+            assert manager.bump_resume_count(ticket.ticket_id) == i + 1
+        assert ticket.resume_count == 3
+        # ???????
+        from app.services.agent.reply_ticket import ticket_from_payload, ticket_to_payload
+
+        restored = ticket_from_payload(ticket_to_payload(ticket))
+        assert restored.resume_count == 3
+        assert manager.bump_resume_count("missing") == 0
+    finally:
+        unregister_robot_mcp_context(token)

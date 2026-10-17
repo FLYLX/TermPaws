@@ -24,6 +24,10 @@ QQ_TICKET_SUPERSEDE_REASON = "superseded by newer QQ message"
 # 首轮宽限期：票据创建到第一笔 update_plan 之间可能有很长一段工具执行
 # （复杂任务几分钟都正常）。窗口内的票据绝不被同会话新消息顶掉。
 QQ_TICKET_FIRST_TURN_GRACE_SECONDS = 240.0
+
+# 同一票据的 plan resume 上限：模型一直不收尾时熔断，防止旧意图被无限
+# 复活重跑（用户的纠正消息生成的是新票据，不受此限制）。
+MAX_PLAN_RESUMES_PER_TICKET = 8
 CURRENT_QQ_MESSAGE_MARKER = "[Current QQ message]"
 CQ_CODE_RE = re.compile(r"\[CQ:[^\]]+\]", re.IGNORECASE)
 
@@ -249,6 +253,9 @@ class ReplyTicket:
     # 内容完全相同的活跃票据 id（同会话同文本在飞来）。只作信息提示，
     # 是否按重复处理由模型判断。
     duplicate_of: str = ""
+    # plan resume sweep 已踢过这张票的次数。模型始终不收尾时用来熔断，
+    # 防止同一旧计划被无限复活重跑（纯计数上限，与内容无关）。
+    resume_count: int = 0
 
     @property
     def is_qq(self) -> bool:
@@ -805,6 +812,17 @@ class ReplyTicketManager:
             ticket = self._tickets.get(self._resolve_ticket_id_locked(ticket_id))
             if ticket is not None:
                 ticket.updated_at = datetime.now()
+
+    def bump_resume_count(self, ticket_id: str) -> int:
+        """plan resume 被踢一次计一次，返回累计次数（供熔断判断）。"""
+        with self._lock:
+            ticket = self._tickets.get(self._resolve_ticket_id_locked(ticket_id))
+            if ticket is None:
+                return 0
+            ticket.resume_count += 1
+            ticket.updated_at = datetime.now()
+            _persist_ticket(ticket)
+            return ticket.resume_count
 
     def latest_plan_for_item(
         self, item_id: str

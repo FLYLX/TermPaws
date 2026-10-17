@@ -623,6 +623,7 @@ class RobotService:
             setup_integration_chat_contexts,
         )
         from app.services.agent.reply_ticket import (
+            MAX_PLAN_RESUMES_PER_TICKET,
             plan_has_open_steps,
             reply_ticket_manager,
         )
@@ -660,6 +661,10 @@ class RobotService:
             robot_id = str(ticket.robot_id or "")
             item_id = str(ticket.item_id or "")
             if not item_id:
+                continue
+            # 熔断：模型一直不收尾的票据不能无限复活（旧意图被用户改口
+            # 推翻后，每次 resume 都可能把过期操作重做一遍）。
+            if int(getattr(ticket, "resume_count", 0) or 0) >= MAX_PLAN_RESUMES_PER_TICKET:
                 continue
             is_robot_ticket = bool(conversation_key and robot_id)
             try:
@@ -706,6 +711,44 @@ class RobotService:
                 if not plan_has_open_steps(ticket.plan):
                     continue
 
+                # 同会话其它在飞/更新的票据：纠正消息（「刚才那个不算」）
+                # 会生成新票据，旧票据的计划若还开着，resume 会把已被推翻的
+                # 意图重做一遍。把事实摆出来，是否收尾由模型判断。
+                sibling_notes: list[str] = []
+                with reply_ticket_manager._lock:
+                    for other in list(reply_ticket_manager._tickets.values()):
+                        if (
+                            other.ticket_id == ticket.ticket_id
+                            or other.conversation_key != conversation_key
+                            or other.status in {"delivered", "failed", "sending"}
+                        ):
+                            continue
+                        if other.plan:
+                            sibling_notes.append(
+                                f"票据 {other.ticket_id[:8]}（进行中）「"
+                                f"{str(other.request_message or '')[:60]}」"
+                            )
+                        elif (
+                            (now - other.updated_at).total_seconds() < 900
+                            and other.external_report_sent
+                        ):
+                            # 刚完成不久的票据：它很可能就是用户改口后的新意图，
+                            # resume 旧计划前必须知道它的存在。
+                            sibling_notes.append(
+                                f"票据 {other.ticket_id[:8]}（刚完成）「"
+                                f"{str(other.request_message or '')[:60]}」"
+                            )
+                sibling_hint = ""
+                if sibling_notes:
+                    sibling_hint = (
+                        "\n注意：该会话的其它票据："
+                        + "；".join(sibling_notes[:3])
+                        + "。「刚完成」的票据意味着服务器现状很可能是它的成果，"
+                        "不是本票据没做——若本票据的意图已被取代/覆盖（用户改口、"
+                        "同一件事重发），直接把剩余步骤全部标 completed 结束，"
+                        "不要按旧计划重做，也不要重复汇报。"
+                    )
+
                 reply_target = RobotReplyTarget.model_validate(ticket.reply_target) if ticket.reply_target else None
                 if reply_target is not None:
                     contexts = {
@@ -730,6 +773,7 @@ class RobotService:
                                 "不要再执行——直接用 mcp_local_update_plan 把剩余步骤全部标为 completed"
                                 "（计划会自动关闭），然后向用户汇报最终结果；"
                                 "只有确实没做完的步骤才继续执行，每完成一步用 update_plan 更新状态。"
+                                + sibling_hint
                             ),
                             raw_content="",
                             query="resume plan",
@@ -738,6 +782,7 @@ class RobotService:
                         )
                     )
                     resumed += 1
+                    reply_ticket_manager.bump_resume_count(ticket.ticket_id)
                     if robot_id:
                         record_robot_event(
                             robot_id,

@@ -1052,7 +1052,10 @@ class LocalMCPServer:
         if not item_id:
             return [{"type": "text", "text": "Error: item_id required"}]
 
-        from app.services.agent.reply_ticket import reply_ticket_manager
+        from app.services.agent.reply_ticket import (
+            plan_has_open_steps,
+            reply_ticket_manager,
+        )
 
         # The plan is a field of the owning reply ticket. A turn without a
         # resolvable ticket gets an error instead of writing the plan anywhere
@@ -1177,7 +1180,41 @@ class LocalMCPServer:
                 )
             except Exception:
                 pass
-            return [{"type": "text", "text": "Plan completed." + self._closure_audit(ticket)}]
+            # 计划收尾时，同会话若还有更旧的未完成计划（常见于用户改口：
+            # 新票据覆盖了旧意图但没接管），提醒模型一并收尾，否则 resume
+            # sweep 稍后会把旧意图重跑一遍。
+            closure_note = ""
+            try:
+                conv_key = str(getattr(ticket, "conversation_key", "") or "")
+                if conv_key:
+                    stale_open: list[str] = []
+                    for other in list(reply_ticket_manager._tickets.values()):
+                        if (
+                            other.ticket_id == ticket.ticket_id
+                            or str(getattr(other, "conversation_key", "") or "") != conv_key
+                            or not plan_has_open_steps(getattr(other, "plan", None))
+                            or other.created_at >= ticket.created_at
+                        ):
+                            continue
+                        stale_open.append(
+                            f"{other.ticket_id[:8]}「{str(other.request_message or '')[:60]}」"
+                        )
+                    if stale_open:
+                        closure_note = (
+                            "\n提醒：该会话还有更旧的未完成计划："
+                            + "；".join(stale_open[:3])
+                            + "。若它们的意图已被你刚完成的任务覆盖/推翻（用户改口等），"
+                            "用 update_plan(supersede_ticket_ids=[票据号]) 一并收尾，"
+                            "避免稍后自动续跑把旧意图重做一遍；若是独立的并行任务则不用管。"
+                        )
+            except Exception:
+                pass
+            return [
+                {
+                    "type": "text",
+                    "text": "Plan completed." + self._closure_audit(ticket) + closure_note,
+                }
+            ]
 
         if not isinstance(plan, list):
             return [{"type": "text", "text": "Error: plan must be a list"}]

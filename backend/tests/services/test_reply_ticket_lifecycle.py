@@ -1133,3 +1133,64 @@ def test_offroute_send_note_warns_when_target_not_in_turn_scope() -> None:
     finally:
         unregister_robot_mcp_context(token)
         manager.reset()
+
+
+def test_watchdog_skips_ticket_whose_input_is_still_queued(monkeypatch) -> None:
+    """???????????????????????????"""
+    from datetime import timezone
+
+    from app.services.agent import task_watchdog
+    from app.services.agent.reply_ticket import reply_ticket_manager as manager
+    from app.services.agent.session import (
+        AgentSession,
+        InputMessage,
+        InputType,
+        agent_session_manager,
+    )
+
+    manager.reset()
+    monkeypatch.setattr(
+        "app.services.agent.reply_ticket.reply_ticket_manager", manager
+    )
+    agent, token = _make_qq_agent_and_context()
+    session = AgentSession("item-queued-test", "handler-1")
+    monkeypatch.setattr(
+        agent_session_manager, "_sessions", {"item-queued-test": session}
+    )
+    try:
+        ticket = manager.create_for_agent(
+            agent,
+            item_id="item-queued-test",
+            handler_id="handler-1",
+            message="wait in queue",
+            source_type="qq",
+        )
+        # ??????????????????? orphan ??
+        session.input_queue.put_nowait(
+            InputMessage(
+                input_type=InputType.CHAT,
+                content="wait in queue",
+                raw_content="wait in queue",
+                reply_ticket_id=ticket.ticket_id,
+            )
+        )
+        ticket.updated_at = ticket.updated_at - timedelta(minutes=30)
+        stats = {"orphan_tickets_removed": 0, "stale_tickets_closed": 0}
+        task_watchdog._remove_orphan_tickets(
+            __import__("datetime").datetime.now(timezone.utc), stats
+        )
+        assert ticket.status == "pending"
+        assert stats["stale_tickets_closed"] == 0
+
+        # ?????????????????????????
+        session.input_queue.get_nowait()
+        task_watchdog._remove_orphan_tickets(
+            __import__("datetime").datetime.now(timezone.utc), stats
+        )
+        assert ticket.status == "failed"
+    finally:
+        session._consumer_shutdown = True
+        session._wake_event.set()
+        session._consumer_thread.join(timeout=5)
+        unregister_robot_mcp_context(token)
+        manager.reset()

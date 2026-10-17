@@ -53,6 +53,27 @@ def _stale_timeout_seconds(status: str) -> float:
     return float(settings.AGENT_WATCHDOG_STALE_SECONDS)
 
 
+def _ticket_has_queued_input(ticket_id: str) -> bool:
+    """该票据对应的输入是否还排在某个会话队列里（轮次尚未真正开始）。
+
+    排在长任务后面的输入可能等十几分钟——这段时间票据看似闲置，但任务
+    链还活着。看门狗绝不能把这种票据当孤儿关掉，否则轮次真正开跑时
+    回复路由已经被埋了。
+    """
+    try:
+        from app.services.agent.session import agent_session_manager
+
+        with agent_session_manager._lock:
+            sessions = list(agent_session_manager._sessions.values())
+        for session in sessions:
+            for entry in list(session.input_queue.queue):
+                if str(getattr(entry, "reply_ticket_id", "") or "") == ticket_id:
+                    return True
+    except Exception:
+        logger.debug("[TaskWatchdog] queued-input check failed", exc_info=True)
+    return False
+
+
 def _close_stale_orphan_ticket(ticket: Any, stats: dict[str, int]) -> None:
     from app.services.agent.reply_ticket import _persist_ticket, reply_ticket_manager
 
@@ -110,6 +131,10 @@ def _remove_orphan_tickets(now: datetime, stats: dict[str, int]) -> None:
         # 由轮次 touch 刷新，但即便失手也绝不由 watchdog 关闭/删除——
         # 计划生命周期只由 plan 步骤自身决定（跑到 plan 为空为止）。
         if plan_has_open_steps(getattr(ticket, "plan", None)):
+            continue
+        # 输入还在会话队列里排队等轮次的票据不是孤儿——队列等待时间
+        # 不算闲置，关了它等于埋掉这条消息的回复路由。
+        if _ticket_has_queued_input(ticket.ticket_id):
             continue
         updated_at = _as_utc(ticket.updated_at)
         if updated_at >= inactive_cutoff:

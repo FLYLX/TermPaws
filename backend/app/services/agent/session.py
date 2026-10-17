@@ -1,11 +1,11 @@
 import asyncio
-import os
-import sys
 import hashlib
 import json
 import logging
+import os
 import queue
 import re
+import sys
 import threading
 import time
 from collections import deque
@@ -52,6 +52,7 @@ from app.services.agent.robot_delivery import (
     ROBOT_SEND_TOOL_NAME,
     robot_reply_event_content,
 )
+from app.services.agent.token_usage import token_usage_tracker
 from app.services.agent.tool_arguments import (
     ToolArgumentParseError,
     parse_tool_arguments,
@@ -62,7 +63,6 @@ from app.services.agent.tool_grounding import (
     strip_think_tags,
 )
 from app.services.agent.tool_selection import select_tools_for_turn
-from app.services.agent.token_usage import token_usage_tracker
 from app.services.agent.turn_coordinator import agent_turn_coordinator, agent_turn_key
 from app.services.llm_completion import build_litellm_completion_kwargs
 from app.services.terminal_command_state import terminal_command_state_manager
@@ -741,6 +741,8 @@ class AgentSession:
         self._daemon_jobs_snapshot: list[dict[str, Any]] = []
         self._daemon_jobs_snapshot_at: datetime | None = None
         self._recent_finished_jobs: list[dict[str, Any]] = []
+        # 会话级已验证可用工具白名单（tool -> 备注），由 job 沉淀钩子维护
+        self._verified_tools: dict[str, str] = {}
 
         self._wake_event = threading.Event()
         self._consumer_shutdown = False
@@ -1003,17 +1005,37 @@ class AgentSession:
         job_id: str = "",
         success: bool = False,
         exit_code: int | None = None,
+        output_tail: str = "",
     ) -> None:
+        output_tail = str(output_tail or "")[-150:]
         with self.lock:
             self._recent_finished_jobs.append({
                 "command": self._short_command(command, max_length=120),
                 "job_id": job_id,
                 "success": success,
                 "exit_code": exit_code,
+                "output_tail": output_tail,
                 "finished_at": datetime.now(),
             })
             if len(self._recent_finished_jobs) > 3:
                 self._recent_finished_jobs = self._recent_finished_jobs[-3:]
+        try:
+            from app.services.filters.env_facts import sediment_job_result
+
+            summary = sediment_job_result(
+                self.item_id,
+                command,
+                success=success,
+                exit_code=exit_code,
+                output_tail=output_tail,
+                job_id=job_id,
+            )
+            verified = summary.get("verified") or summary.get("recovered")
+            if verified:
+                with self.lock:
+                    self._verified_tools[verified] = "verified"
+        except Exception:
+            logger.debug("[AgentSession] env-facts sediment skipped", exc_info=True)
 
     def _find_duplicate_background_job(self, command: str) -> dict[str, Any] | None:
         normalized_command = self._normalize_text(command or "")
@@ -3060,6 +3082,71 @@ class AgentSession:
         for job in finished:
             status = "OK" if job.get("success") else f"FAIL(exit={job.get('exit_code')})"
             lines.append(f"Background job [{status}]: job_id={job.get('job_id', '')} cmd={job.get('command', '')}")
+            job_output = str(job.get("output_tail") or "").strip()
+            if job_output and not job.get("success"):
+                lines.append(f"  output_tail: {job_output[-100:]}")
+            has_content = True
+
+        # 固定状态区：已确认的环境约束（缺失工具黑名单）+ 已验证可用工具。
+        # 这些事实持久在 DB 规则表里，不随对话窗口滚动丢失。
+        try:
+            import uuid as _uuid
+
+            from sqlmodel import Session as _Session
+
+            from app.core.db import engine as _engine
+            from app.models import Item as _Item
+            from app.services.filters.env_facts import list_missing_tools
+
+            with _Session(_engine) as _db:
+                _item = _db.get(_Item, _uuid.UUID(str(self.item_id)))
+                _env_rules = dict(_item.output_filter_rules or {}) if _item else {}
+            missing_tools = list_missing_tools(_env_rules)
+        except Exception:
+            missing_tools = []
+        with self.lock:
+            verified_tools = sorted(self._verified_tools)
+        if missing_tools or verified_tools:
+            lines.append("Known environment constraints:")
+            for entry in missing_tools:
+                lines.append(
+                    f"- 缺失工具: {entry['tool']}（已实测不存在，累计{entry['count']}次，"
+                    "调用会被过滤器直接拦截；复验用 command -v）"
+                )
+            if verified_tools:
+                lines.append(f"- 已验证可用工具: {', '.join(verified_tools)}")
+            has_content = True
+
+        # 未了结的 QQ 汇报义务：发送失败只在当时告知一次，票据被接管/合并
+        # 后义务也可能跟着丢失。这里把结构上的欠账固定注入，由模型自己判断
+        # 何时补回、回什么——系统不代发。
+        from app.services.agent.reply_ticket import reply_ticket_manager
+
+        report_debts = reply_ticket_manager.pending_report_debts(self.item_id)
+        for entry in report_debts[:5]:
+            target = f"{entry.get('target_type')}:{entry.get('target_id')}"
+            request = str(entry.get("request") or "")[:40]
+            kind = str(entry.get("kind") or "")
+            if kind == "undelivered":
+                lines.append(
+                    f"- {target}：任务「{request}」的汇报发送失败（未送达），"
+                    "通道恢复后主动补发，不要当成已汇报。"
+                )
+            elif kind == "inherited":
+                lines.append(
+                    f"- {target}：票据 {entry.get('ticket_id')} 的任务「{request}」已由你接管，"
+                    "但原会话还没收到结果——收尾时用 mcp_robot_send_message 显式回复该 target"
+                    "（或确认已回过/不需要回）。"
+                )
+            else:
+                lines.append(
+                    f"- {target}：任务「{request}」进行中，完成后记得回这个来源。"
+                )
+        if report_debts:
+            lines.append(
+                "以上每个来源的结论各回各家：显式 target_type+target_id 逐个发送；"
+                "不要把别的来源（含 web）的结果发错会话。"
+            )
             has_content = True
 
         if not has_content:
@@ -3202,11 +3289,10 @@ class AgentSession:
         try:
             if not user_message.strip() or not assistant_message.strip():
                 return
-            from app.services.agent.memory.vector_store import vector_store
-            from app.services.agent.prompts import persist_memory_candidate
-
             # 定义在 chat 路由模块里；函数内延迟导入避免模块级循环依赖。
             from app.api.routes.chat import extract_important_info
+            from app.services.agent.memory.vector_store import vector_store
+            from app.services.agent.prompts import persist_memory_candidate
 
             handler_id = str(getattr(agent, "handler_id", "") or "").strip()
             if not handler_id:

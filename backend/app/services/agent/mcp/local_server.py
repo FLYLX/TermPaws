@@ -1122,15 +1122,30 @@ class LocalMCPServer:
             ]
 
         # 接管同任务旧计划：关闭旧票据上的计划，条带立即去重。
+        # 旧票据若还欠 QQ 来源一条汇报，义务随之转移到当前票据。
         superseded_notes: list[str] = []
         for ref in supersede_ticket_ids:
             if ticket.ticket_id == ref or ticket.ticket_id.startswith(ref):
                 continue
-            finalized = reply_ticket_manager.supersede_plan(ref, item_id)
+            finalized = reply_ticket_manager.supersede_plan(
+                ref, item_id, inherit_to_ticket_id=ticket.ticket_id
+            )
             if finalized is not None:
                 superseded_notes.append(
                     f"已关闭旧计划 {ref[:8]}（{len(finalized)} 个步骤标记取消）"
                 )
+        current = reply_ticket_manager.get(ticket.ticket_id)
+        if current and current.inherited_debts:
+            debt_lines = [
+                f"  - {str(d.get('target_type'))}:{str(d.get('target_id'))}"
+                f"（原请求：{str(d.get('request') or '')[:40]}）"
+                for d in current.inherited_debts
+            ]
+            superseded_notes.append(
+                "以下 QQ 会话的汇报义务已并入当前票据，收尾时逐个显式回复"
+                "（mcp_robot_send_message 带 target_type/target_id），"
+                "确认不需要回就说明理由：\n" + "\n".join(debt_lines)
+            )
 
         # plan=[] means "task done" — mark all remaining steps as completed
         # and keep the plan on the ticket for UI history.
@@ -1162,7 +1177,7 @@ class LocalMCPServer:
                 )
             except Exception:
                 pass
-            return [{"type": "text", "text": "Plan completed."}]
+            return [{"type": "text", "text": "Plan completed." + self._closure_audit(ticket)}]
 
         if not isinstance(plan, list):
             return [{"type": "text", "text": "Error: plan must be a list"}]
@@ -1184,6 +1199,28 @@ class LocalMCPServer:
             item["status"] in {"completed", "cancelled"} for item in normalized
         )
         had_plan_before = bool(ticket.plan)
+        # 重写 diff：旧计划里未完成的步骤若在新计划里凭空消失（没经过
+        # completed/cancelled），几乎一定是改写时把用户需求弄丢了——
+        # 长任务里原始消息早已滚出上下文窗口，plan 是它唯一的载体。
+        dropped_steps = self._dropped_open_steps(ticket.plan, normalized)
+        # 相同写入去重：job 回调的提示语会诱导模型每轮重写计划，内容没变
+        # 就不广播、不刷屏，只 touch 票据保持活性。重写越少，漂移越少。
+        current_plan = [
+            {"step": str(s.get("step") or ""), "status": str(s.get("status") or "")}
+            for s in (ticket.plan or [])
+            if isinstance(s, dict)
+        ]
+        if not all_terminal and normalized == current_plan:
+            reply_ticket_manager.update_ticket_plan(ticket.ticket_id, normalized)
+            return [
+                {
+                    "type": "text",
+                    "text": (
+                        "计划内容无变化，已跳过重复写入。只有步骤状态推进或"
+                        "步骤本身需要调整时才调用 update_plan。"
+                    ),
+                }
+            ]
         # Once every step reached a terminal state, broadcast the final
         # snapshot once, then clear the plan from the ticket so finished work
         # leaves the plan table immediately (no extra plan=[] call needed).
@@ -1236,6 +1273,13 @@ class LocalMCPServer:
         lines.extend(superseded_notes)
         if duplicate_warning:
             lines.append(duplicate_warning)
+        if dropped_steps:
+            lines.append(
+                "⚠ 以下未完成步骤在新计划里凭空消失了："
+                + "；".join(f"「{text[:40]}」" for text in dropped_steps[:3])
+                + "。若是有意放弃，把它们显式标为 cancelled 并说明原因；"
+                "否则立刻恢复——静默消失通常意味着原始需求被改写丢了。"
+            )
         if explanation:
             lines.append(f"Note: {explanation}")
         if all(item["status"] == "completed" for item in normalized):
@@ -1245,6 +1289,7 @@ class LocalMCPServer:
                 "If the same information was already covered by a recent reply "
                 "(even in different wording), do NOT repeat it — a one-line "
                 "confirmation is enough."
+                + self._closure_audit(ticket)
             )
         elif all(item["status"] == "cancelled" for item in normalized):
             lines.append(
@@ -1273,6 +1318,66 @@ class LocalMCPServer:
                         "done, or one is genuinely blocked."
                     )
         return [{"type": "text", "text": "\n".join(lines)}]
+
+    @staticmethod
+    def _normalize_step_text(value: Any) -> str:
+        return re.sub(r"\s+", "", str(value or ""))
+
+    def _dropped_open_steps(self, old_plan: Any, new_plan: list[dict]) -> list[str]:
+        """旧计划中 pending/in_progress 的步骤在新计划里凭空消失的部分。
+
+        改写措辞是常态，只对整步蒸发告警； completed/cancelled 是显式终态，
+        不算蒸发。
+        """
+        if not isinstance(old_plan, list) or not old_plan:
+            return []
+        new_texts = {
+            self._normalize_step_text(s.get("step")) for s in new_plan if isinstance(s, dict)
+        }
+        dropped: list[str] = []
+        for step in old_plan:
+            if not isinstance(step, dict):
+                continue
+            if str(step.get("status")) not in {"pending", "in_progress"}:
+                continue
+            text = str(step.get("step") or "").strip()
+            if text and self._normalize_step_text(text) not in new_texts:
+                dropped.append(text)
+        return dropped
+
+    def _closure_audit(self, ticket: Any) -> str:
+        """计划关闭时回显不可变的原始请求 + 本任务执行证据链，让模型对照自查。
+
+        原始请求和执行轨迹都不依赖会滚动的对话窗口：请求在票据上，
+        轨迹在票据的证据账本里——模型收尾时看到的永远是完整现场。
+        """
+        request_text = str(getattr(ticket, "request_message", "") or "").strip()
+        ledger = [
+            str(line).strip()
+            for line in (getattr(ticket, "action_ledger", None) or [])
+            if str(line).strip()
+        ]
+        undelivered = bool(getattr(ticket, "report_undelivered", False))
+        if not request_text and not ledger and not undelivered:
+            return ""
+        text = "\n收尾审计："
+        if request_text:
+            text += f"原始请求是「{request_text[:200]}」。"
+        if ledger:
+            text += "\n本任务执行轨迹：\n" + "\n".join(
+                f"  - {line}" for line in ledger[-8:]
+            )
+        if undelivered:
+            text += (
+                "\n⚠ 最终汇报尚未送达 QQ（通道故障）——别当成已汇报结束，"
+                "通道恢复后要补发。"
+            )
+        text += (
+            "\n逐条对照——每个要求都有对应的已执行动作吗"
+            "（尤其收尾动作：关服/清理/汇报）？有遗漏就别这样结束："
+            "重建计划把尾巴做完。"
+        )
+        return text
 
     def _provision_turn_reply_ticket(self, item_id: str, args: dict) -> str:
         """Create and attach a reply ticket for a turn that has none.
@@ -1690,12 +1795,32 @@ class LocalMCPServer:
                     )
             if agent_session:
                 agent_session.clear_terminal_job(command)
+                # daemon 的 success 只表示"跑完"（不含超时/取消），非零退出码
+                # 也算。这里统一成语义上的成功：跑完且 exit_code 为 0——否则
+                # Execution State 会把 127 的失败任务显示成 [OK]，与环境黑
+                # 名单沉淀互相矛盾，agent 会怀疑约束已失效。
+                job_ok = bool(result.get("success")) and not result.get("cancelled")
+                if result.get("exit_code") not in (0, None):
+                    job_ok = False
                 agent_session.record_finished_job(
                     command,
                     job_id=str(result.get("job_id") or ""),
-                    success=bool(result.get("success")) and not result.get("cancelled"),
+                    success=job_ok,
                     exit_code=result.get("exit_code"),
+                    output_tail=str(result.get("output_tail") or ""),
                 )
+                if reply_ticket_id:
+                    try:
+                        from app.services.agent.reply_ticket import reply_ticket_manager
+
+                        outcome = "OK" if job_ok else f"FAIL(exit={result.get('exit_code')})"
+                        ledger_line = f"job {outcome}: {command[:60]}"
+                        tail = str(result.get("output_tail") or "").strip()
+                        if not job_ok and tail:
+                            ledger_line += f" → {tail[-60:]}"
+                        reply_ticket_manager.record_action(reply_ticket_id, ledger_line)
+                    except Exception:
+                        pass
 
             busy = _conversation_turn_busy(agent_session, robot_job_context)
             entry = {
@@ -1964,9 +2089,9 @@ class LocalMCPServer:
                 )
         if has_plan:
             instruction = (
-                "你的第一个动作必须是调用 mcp_local_update_plan，"
-                "把当前步骤标为 completed 并开始下一步（或全部完成时清空 plan）。"
-                "然后再根据结果回复用户。不要为中间结果发送 QQ 消息。"
+                "若本结果推进了计划中的步骤：用 mcp_local_update_plan 把对应步骤标为 "
+                "completed 并继续下一步（全部完成时清空 plan）；计划无实质变化就不要重写"
+                "（相同写入会被系统忽略）。然后再根据结果回复用户。不要为中间结果发送 QQ 消息。"
                 "如果不需要回复用户，最终只输出 NRN 即可。"
             )
         else:
@@ -2215,7 +2340,10 @@ class LocalMCPServer:
                 {
                     "type": "text",
                     "text": (
-                        f"命令已发送: {command.strip()}。终端输出会在下一轮反馈中到达，你可以继续执行其他操作或等待结果。"
+                        f"命令已发送: {command.strip()}。终端反馈只送一轮（约 20-30 秒窗口），"
+                        "之后的持续输出不会再唤起你。要等长过程的特定输出（启动完成、编译结束等），"
+                        "用 run_job 跑等待式命令（如 timeout 120 tail -f 日志 | grep -m1 标记），"
+                        "结果会自动回调；不要空等主终端。"
                         if success
                         else self._terminal_unavailable_message(str(item_id))
                     ) + fullscreen_note,

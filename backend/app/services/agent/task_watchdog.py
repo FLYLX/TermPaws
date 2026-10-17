@@ -71,6 +71,18 @@ def _close_stale_orphan_ticket(ticket: Any, stats: dict[str, int]) -> None:
         else:
             current.status = "failed"
             current.delivery_error = "stale pending reply ticket closed by watchdog"
+            # QQ 票据有实际执行痕迹（ledger/命令）却从没回过来源：立"未送达"
+            # 标记，让 prompt 固定注入提醒模型判断是否补发（纯静默闲聊票据
+            # 没有执行痕迹，不在这里产生假欠账）。
+            if (
+                getattr(current, "is_qq", False)
+                and (current.action_ledger or current.command)
+            ):
+                current.report_undelivered = True
+                current.action_ledger = (
+                    current.action_ledger
+                    + ["票据超时关闭时仍未向来源汇报（待补发判断）"]
+                )[-12:]
         current.updated_at = closed_at
         _persist_ticket(current)
     logger.info(

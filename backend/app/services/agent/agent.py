@@ -353,19 +353,42 @@ class Agent:
             integration.clear_chat_context(self, {})
 
     def _get_output_filter(self) -> OutputFilter | None:
-        if not self._context or not self._context.output_filter_enabled:
+        if not self._context:
             return None
 
         from app.services.filters.output_filter import FilterRule
 
+        # 规则以 DB 为准（环境黑名单沉淀钩子直接写库，不经 context 快照），
+        # 快照只作为 DB 读取失败时的兜底。
+        enabled = self._context.output_filter_enabled
+        rules: dict = dict(self._context.output_filter_rules or {})
+        try:
+            import uuid
+
+            from sqlmodel import Session
+
+            from app.core.db import engine
+            from app.models import Item
+
+            with Session(engine) as db:
+                item = db.get(Item, uuid.UUID(str(self._context.item_id)))
+                if item is not None:
+                    enabled = item.output_filter_enabled
+                    rules = dict(item.output_filter_rules or {})
+        except Exception:
+            pass
+        if not enabled:
+            return None
+
         filters = []
-        for filter_name, filter_config in self._context.output_filter_rules.items():
+        for filter_name, filter_config in rules.items():
             if isinstance(filter_config, dict):
                 filter_rule = FilterRule(
                     name=filter_name,
                     regex_patterns=filter_config.get("regex_patterns", []),
                     action_type=filter_config.get("action_type", "ignore"),
                     replace_rules=filter_config.get("action", {}).get("replace_rules", {}),
+                    reason=filter_config.get("reason", ""),
                 )
                 filters.append(filter_rule)
 

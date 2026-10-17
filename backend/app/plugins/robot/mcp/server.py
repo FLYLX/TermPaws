@@ -1526,6 +1526,19 @@ class RobotMCPServer:
             report_lines.append(f"sent: {label}")
         for target, sent_messages in delivered:
             self._remember_sent_messages(robot_id, target, sent_messages, args=args)
+            _mt_ticket_id = str(args.get("_reply_ticket_id") or "").strip()
+            if _mt_ticket_id:
+                try:
+                    from app.services.agent.reply_ticket import reply_ticket_manager
+
+                    reply_ticket_manager.mark_report_delivered(_mt_ticket_id)
+                    reply_ticket_manager.mark_debt_fulfilled(
+                        _mt_ticket_id,
+                        target_type=target.target_type,
+                        target_id=target.target_id,
+                    )
+                except Exception:
+                    pass
             _label = self._target_label(robot_id, target)
             self._emit_qq_reply_timeline(
                 item_id=str(args.get("_TermPaws_item_id") or ""),
@@ -2924,6 +2937,19 @@ class RobotMCPServer:
                     text=text,
                     context=context,
                 )
+                _bc_ticket_id = str(args.get("_reply_ticket_id") or "").strip()
+                if _bc_ticket_id:
+                    try:
+                        from app.services.agent.reply_ticket import reply_ticket_manager
+
+                        for _t in sent:
+                            reply_ticket_manager.mark_debt_fulfilled(
+                                _bc_ticket_id,
+                                target_type=str(_t.get("target_type") or ""),
+                                target_id=str(_t.get("target_id") or ""),
+                            )
+                    except Exception:
+                        pass
                 _meta = []
                 for _t in sent:
                     _label = self._target_label(
@@ -2973,6 +2999,19 @@ class RobotMCPServer:
                     messages,
                 )
                 self._remember_sent_messages(robot_id, explicit_target, sent_messages, args=args)
+                _sent_ticket_id = str(args.get("_reply_ticket_id") or "").strip()
+                if _sent_ticket_id:
+                    try:
+                        from app.services.agent.reply_ticket import reply_ticket_manager
+
+                        reply_ticket_manager.mark_report_delivered(_sent_ticket_id)
+                        reply_ticket_manager.mark_debt_fulfilled(
+                            _sent_ticket_id,
+                            target_type=explicit_target.target_type,
+                            target_id=explicit_target.target_id,
+                        )
+                    except Exception:
+                        pass
                 bubble_count = len(sent_messages)
                 turn_total = self._bump_turn_send_count(
                     str(args.get("_reply_ticket_id") or ""), bubble_count
@@ -3027,6 +3066,19 @@ class RobotMCPServer:
                     messages,
                 )
                 self._remember_sent_messages(robot_id, context_target, sent_messages, args=args)
+                _sent_ticket_id = str(args.get("_reply_ticket_id") or "").strip()
+                if _sent_ticket_id:
+                    try:
+                        from app.services.agent.reply_ticket import reply_ticket_manager
+
+                        reply_ticket_manager.mark_report_delivered(_sent_ticket_id)
+                        reply_ticket_manager.mark_debt_fulfilled(
+                            _sent_ticket_id,
+                            target_type=context_target.target_type,
+                            target_id=context_target.target_id,
+                        )
+                    except Exception:
+                        pass
                 _label = self._target_label(robot_id, context_target)
                 self._emit_qq_reply_timeline(
                     item_id=str(args.get("_TermPaws_item_id") or ""),
@@ -3079,14 +3131,26 @@ class RobotMCPServer:
                     status="error",
                     error=str(exc),
                 )
+            _failed_ticket_id = str(args.get("_reply_ticket_id") or "").strip()
+            if _failed_ticket_id:
+                try:
+                    from app.services.agent.reply_ticket import reply_ticket_manager
+
+                    reply_ticket_manager.mark_report_undelivered(
+                        _failed_ticket_id, str(exc)
+                    )
+                except Exception:
+                    pass
             return [
                 {
                     "type": "text",
                     "text": (
                         f"发送失败（通道侧错误）：{exc}。"
                         "机器人到 QQ 的通道当前不可用。不要连续重试同一条内容"
-                        "（重试也没用还刷屏）。先告诉用户一句现在发不出去，"
-                        "过一会儿再试，或者等通道恢复。"
+                        "（重试也没用还刷屏）。系统已为本票据立了「未送达」标记，"
+                        "之后每轮都会提醒你补发，不要当成已汇报。"
+                        "注意：汇报失败不等于任务暂停——手里的任务继续干完，"
+                        "结果挂在未送达标记上等通道恢复后补发即可。"
                     ),
                 }
             ]

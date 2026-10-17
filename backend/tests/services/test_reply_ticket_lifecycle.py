@@ -270,6 +270,19 @@ def _qq_ticket_manager(conversation_key: str = "group:770362397"):
     return token, agent, ReplyTicketManager()
 
 
+def _age_past_first_turn_grace(*tickets) -> None:
+    """把票据年龄推到首轮宽限期之外（模拟已完成首轮、闲置的票据）。"""
+    from app.services.agent.reply_ticket import QQ_TICKET_FIRST_TURN_GRACE_SECONDS
+
+    for ticket in tickets:
+        ticket.created_at = ticket.created_at - timedelta(
+            seconds=QQ_TICKET_FIRST_TURN_GRACE_SECONDS + 60
+        )
+        ticket.updated_at = ticket.updated_at - timedelta(
+            seconds=QQ_TICKET_FIRST_TURN_GRACE_SECONDS + 60
+        )
+
+
 def test_new_qq_ticket_supersedes_stale_undelivered_ticket() -> None:
     token, agent, manager = _qq_ticket_manager()
     try:
@@ -280,6 +293,7 @@ def test_new_qq_ticket_supersedes_stale_undelivered_ticket() -> None:
             message="5*5=?",
             source_type="qq",
         )
+        _age_past_first_turn_grace(first)
         second = manager.create_for_agent(
             agent,
             item_id="item-1",
@@ -334,6 +348,7 @@ def test_qq_ticket_with_sent_report_finalized_on_supersede() -> None:
             source_type="qq",
         )
         manager.mark_external_report_sent(first.ticket_id)
+        _age_past_first_turn_grace(first)
         manager.create_for_agent(
             agent,
             item_id="item-1",
@@ -736,3 +751,347 @@ def test_update_ticket_plan_and_latest_plan_for_item() -> None:
     manager.update_ticket_plan(ticket.ticket_id, [])
     assert manager.latest_plan_for_item("item-1") == (None, [])
     assert manager.latest_plan_for_item("item-unknown") == (None, [])
+
+
+
+def _make_qq_agent_and_context(conversation_key="group:1001", user_id="2001"):
+    target = RobotReplyTarget(
+        target_type=conversation_key.split(":")[0],
+        target_id=conversation_key.split(":")[1],
+        metadata={},
+    )
+    token = register_robot_mcp_context(
+        RobotMCPContext(
+            robot_id="robot-1",
+            sender_key=f"onebot_v11:{conversation_key}:{user_id}",
+            reply_target=target,
+            conversation_key=conversation_key,
+            conversation_generation=1,
+        )
+    )
+    agent = SimpleNamespace(
+        _context=SimpleNamespace(
+            robot_id="robot-1",
+            robot_context_token=token,
+            reply_ticket_id="",
+        )
+    )
+    return agent, token
+
+
+def test_supersede_plan_transfers_qq_reply_debt() -> None:
+    manager = ReplyTicketManager()
+    agent, token = _make_qq_agent_and_context()
+    try:
+        old = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="T3: change difficulty",
+            source_type="qq",
+        )
+        manager.update_ticket_plan(
+            old.ticket_id, [{"step": "difficulty hard", "status": "in_progress"}]
+        )
+        new_ticket = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="merged turn",
+            source_type="qq",
+        )
+
+        finalized = manager.supersede_plan(
+            old.ticket_id, "item-1", inherit_to_ticket_id=new_ticket.ticket_id
+        )
+        assert finalized is not None
+        assert len(new_ticket.inherited_debts) == 1
+        debt = new_ticket.inherited_debts[0]
+        assert debt["target_type"] == "group"
+        assert debt["target_id"] == "1001"
+        assert debt["from_ticket_id"] == old.ticket_id
+        assert "T3" in debt["request"]
+
+        debts = manager.pending_report_debts("item-1")
+        assert any(
+            d["kind"] == "inherited" and d["target_id"] == "1001" for d in debts
+        )
+
+        manager.mark_debt_fulfilled(
+            new_ticket.ticket_id, target_type="group", target_id="1001"
+        )
+        assert new_ticket.inherited_debts == []
+        assert not any(
+            d["kind"] == "inherited" for d in manager.pending_report_debts("item-1")
+        )
+    finally:
+        unregister_robot_mcp_context(token)
+
+
+def test_supersede_plan_skips_debt_for_answered_ticket() -> None:
+    manager = ReplyTicketManager()
+    agent, token = _make_qq_agent_and_context()
+    try:
+        old = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="answered task",
+            source_type="qq",
+        )
+        manager.update_ticket_plan(
+            old.ticket_id, [{"step": "work", "status": "in_progress"}]
+        )
+        manager.mark_external_report_sent(old.ticket_id)
+        new_ticket = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="takeover",
+            source_type="qq",
+        )
+        manager.supersede_plan(
+            old.ticket_id, "item-1", inherit_to_ticket_id=new_ticket.ticket_id
+        )
+        assert new_ticket.inherited_debts == []
+    finally:
+        unregister_robot_mcp_context(token)
+
+
+def test_find_active_duplicate_and_mark() -> None:
+    manager = ReplyTicketManager()
+    agent, token = _make_qq_agent_and_context()
+    try:
+        first = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="same request",
+            source_type="qq",
+        )
+        # 进行中的任务（有计划）不会被新票据自动顶掉，重复检测才有意义。
+        manager.update_ticket_plan(
+            first.ticket_id, [{"step": "work", "status": "in_progress"}]
+        )
+        second = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="same request",
+            source_type="qq",
+        )
+        found = manager.find_active_duplicate(
+            robot_id="robot-1",
+            conversation_key="group:1001",
+            request_message=second.request_message,
+            exclude_ticket_id=second.ticket_id,
+        )
+        assert found is not None and found.ticket_id == first.ticket_id
+
+        manager.mark_duplicate_of(second.ticket_id, first.ticket_id)
+        assert second.duplicate_of == first.ticket_id
+
+        # 不同文本不算重复
+        assert (
+            manager.find_active_duplicate(
+                robot_id="robot-1",
+                conversation_key="group:1001",
+                request_message="different request",
+            )
+            is None
+        )
+        # 已收尾的票据不算活跃重复
+        manager.update_ticket_plan(first.ticket_id, [])
+        manager.mark_delivered(first.ticket_id)
+        assert (
+            manager.find_active_duplicate(
+                robot_id="robot-1",
+                conversation_key="group:1001",
+                request_message="same request",
+                exclude_ticket_id=second.ticket_id,
+            )
+            is None
+        )
+    finally:
+        unregister_robot_mcp_context(token)
+
+
+def test_pending_report_debts_includes_undelivered() -> None:
+    manager = ReplyTicketManager()
+    agent, token = _make_qq_agent_and_context(conversation_key="private:3001")
+    try:
+        ticket = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="T5: modify datapack",
+            source_type="qq",
+        )
+        manager.mark_report_undelivered(ticket.ticket_id, "bot offline")
+        debts = manager.pending_report_debts("item-1")
+        assert any(
+            d["kind"] == "undelivered" and d["target_id"] == "3001" for d in debts
+        )
+        manager.mark_report_delivered(ticket.ticket_id)
+        assert not any(
+            d["kind"] == "undelivered" for d in manager.pending_report_debts("item-1")
+        )
+    finally:
+        unregister_robot_mcp_context(token)
+
+
+def test_watchdog_orphan_close_marks_qq_ticket_with_work_as_undelivered(
+    monkeypatch,
+) -> None:
+    from app.services.agent.task_watchdog import _close_stale_orphan_ticket
+
+    manager = ReplyTicketManager()
+    # 看门狗内部引用的是模块级单例，换成独立实例隔离状态。
+    monkeypatch.setattr(
+        "app.services.agent.reply_ticket.reply_ticket_manager", manager
+    )
+    agent, token = _make_qq_agent_and_context()
+    try:
+        ticket = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="real task",
+            source_type="qq",
+        )
+        ticket.command = "difficulty hard"
+        stats = {"stale_tickets_closed": 0}
+        _close_stale_orphan_ticket(ticket, stats)
+        assert ticket.status == "failed"
+        assert ticket.report_undelivered is True
+
+        # 纯闲聊静默票据（无执行痕迹）不产生假欠账
+        idle = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="lol",
+            source_type="qq",
+        )
+        _close_stale_orphan_ticket(idle, stats)
+        assert idle.status == "failed"
+        assert idle.report_undelivered is False
+    finally:
+        unregister_robot_mcp_context(token)
+
+
+def test_active_sibling_summary_lists_inflight_tickets() -> None:
+    manager = ReplyTicketManager()
+    agent, token = _make_qq_agent_and_context()
+    try:
+        first = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="T10 garbled",
+            source_type="qq",
+        )
+        manager.update_ticket_plan(
+            first.ticket_id,
+            [
+                {"step": "edit file", "status": "completed"},
+                {"step": "reload", "status": "in_progress"},
+            ],
+        )
+        second = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="T10 resent",
+            source_type="qq",
+        )
+        siblings = manager.active_sibling_summary(
+            robot_id="robot-1",
+            conversation_key="group:1001",
+            exclude_ticket_id=second.ticket_id,
+        )
+        assert len(siblings) == 1
+        assert siblings[0]["ticket_id"] == first.ticket_id[:8]
+        assert siblings[0]["request"] == "T10 garbled"
+        assert siblings[0]["open_steps"] == ["reload"]
+        assert siblings[0]["reported"] is False
+
+        # 自己不出现在自己的兄弟清单里；已收尾的票据也不再出现
+        assert manager.active_sibling_summary(
+            robot_id="robot-1",
+            conversation_key="group:1001",
+            exclude_ticket_id=first.ticket_id,
+        )[0]["ticket_id"] == second.ticket_id[:8]
+        manager.update_ticket_plan(first.ticket_id, [])
+        manager.mark_delivered(first.ticket_id)
+        assert manager.active_sibling_summary(
+            robot_id="robot-1",
+            conversation_key="group:1001",
+            exclude_ticket_id=second.ticket_id,
+        ) == []
+    finally:
+        unregister_robot_mcp_context(token)
+
+
+def test_young_qq_ticket_not_superseded_during_first_turn() -> None:
+    """????????????????????????????"""
+    manager = ReplyTicketManager()
+    agent, token = _make_qq_agent_and_context()
+    try:
+        working = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="long task just started",
+            source_type="qq",
+        )
+        working.command = "sed -i ..."
+        # ?????????????? update_plan??????????
+        newer = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="???",
+            source_type="qq",
+        )
+        assert working.status == "pending"
+        assert newer.inherited_debts == []
+
+        # ????????????????????????????
+        working.created_at = working.created_at - timedelta(seconds=300)
+        working.updated_at = working.updated_at - timedelta(seconds=300)
+        newer2 = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="third message",
+            source_type="qq",
+        )
+        assert working.status == "failed"
+        assert len(newer2.inherited_debts) == 1
+        assert newer2.inherited_debts[0]["from_ticket_id"] == working.ticket_id
+        assert newer2.inherited_debts[0]["target_id"] == "1001"
+
+        # ???????????????????????
+        idle = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="lol",
+            source_type="qq",
+        )
+        idle.created_at = idle.created_at - timedelta(seconds=300)
+        idle.updated_at = idle.updated_at - timedelta(seconds=300)
+        newer3 = manager.create_for_agent(
+            agent,
+            item_id="item-1",
+            handler_id="handler-1",
+            message="fourth",
+            source_type="qq",
+        )
+        assert idle.status == "failed"
+        # 债务仍由活着的 newer2 持有，不向 newer3 重复转移
+        assert len(newer2.inherited_debts) == 1
+        assert newer3.inherited_debts == []
+    finally:
+        unregister_robot_mcp_context(token)

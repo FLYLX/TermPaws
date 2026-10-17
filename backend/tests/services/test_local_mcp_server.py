@@ -282,7 +282,7 @@ def test_execute_command_only_reports_dispatch(monkeypatch) -> None:
     assert result == [
         {
             "type": "text",
-            "text": "命令已发送: echo 23231。终端输出会在下一轮反馈中到达，你可以继续执行其他操作或等待结果。",
+            "text": "命令已发送: echo 23231。终端反馈只送一轮（约 20-30 秒窗口），之后的持续输出不会再唤起你。要等长过程的特定输出（启动完成、编译结束等），用 run_job 跑等待式命令（如 timeout 120 tail -f 日志 | grep -m1 标记），结果会自动回调；不要空等主终端。",
         }
     ]
     assert sent == {"item_id": "item-1", "command": "echo 23231\n"}
@@ -349,7 +349,7 @@ def test_execute_command_sends_shell_like_input_to_active_console(
     assert result == [
         {
             "type": "text",
-            "text": "命令已发送: ls -la。终端输出会在下一轮反馈中到达，你可以继续执行其他操作或等待结果。",
+            "text": "命令已发送: ls -la。终端反馈只送一轮（约 20-30 秒窗口），之后的持续输出不会再唤起你。要等长过程的特定输出（启动完成、编译结束等），用 run_job 跑等待式命令（如 timeout 120 tail -f 日志 | grep -m1 标记），结果会自动回调；不要空等主终端。",
         }
     ]
 
@@ -503,7 +503,7 @@ def test_execute_command_restores_existing_terminal_input_handler(monkeypatch) -
     assert result == [
         {
             "type": "text",
-            "text": "命令已发送: echo restored。终端输出会在下一轮反馈中到达，你可以继续执行其他操作或等待结果。",
+            "text": "命令已发送: echo restored。终端反馈只送一轮（约 20-30 秒窗口），之后的持续输出不会再唤起你。要等长过程的特定输出（启动完成、编译结束等），用 run_job 跑等待式命令（如 timeout 120 tail -f 日志 | grep -m1 标记），结果会自动回调；不要空等主终端。",
         }
     ]
 
@@ -1796,6 +1796,157 @@ def test_update_plan_on_expired_ticket_renews_it(monkeypatch) -> None:
     assert renewed is not None
     assert renewed.ticket_id != "missing-ticket"
     assert renewed.plan == [{"step": "install", "status": "in_progress"}]
+
+
+def test_update_plan_identical_write_is_deduped(monkeypatch) -> None:
+    _manager, make_ticket = _patch_reply_ticket_manager(monkeypatch)
+    ticket = make_ticket()
+    server = LocalMCPServer()
+    plan = [
+        {"step": "download", "status": "completed"},
+        {"step": "install", "status": "in_progress"},
+    ]
+    args = {"item_id": "item-1", "_reply_ticket_id": ticket.ticket_id}
+
+    first = server.call_tool("update_plan", {**args, "plan": plan})
+    assert "Plan updated:" in first[0]["text"]
+
+    second = server.call_tool("update_plan", {**args, "plan": plan})
+    assert "无变化" in second[0]["text"]
+    assert ticket.plan == [
+        {"step": "download", "status": "completed"},
+        {"step": "install", "status": "in_progress"},
+    ]
+
+    changed = server.call_tool(
+        "update_plan",
+        {
+            **args,
+            "plan": [
+                {"step": "download", "status": "completed"},
+                {"step": "install", "status": "completed"},
+            ],
+        },
+    )
+    assert "无变化" not in changed[0]["text"]
+
+
+def test_update_plan_warns_when_open_step_silently_dropped(monkeypatch) -> None:
+    _manager, make_ticket = _patch_reply_ticket_manager(monkeypatch)
+    ticket = make_ticket()
+    server = LocalMCPServer()
+    args = {"item_id": "item-1", "_reply_ticket_id": ticket.ticket_id}
+
+    server.call_tool(
+        "update_plan",
+        {
+            **args,
+            "plan": [
+                {"step": "启动服务器并验证", "status": "in_progress"},
+                {"step": "关服并汇报结果", "status": "pending"},
+            ],
+        },
+    )
+    result = server.call_tool(
+        "update_plan",
+        {
+            **args,
+            "plan": [
+                {"step": "启动服务器并验证", "status": "completed"},
+                {"step": "汇报最终结果", "status": "in_progress"},
+            ],
+        },
+    )
+    text = result[0]["text"]
+    assert "凭空消失" in text
+    assert "关服并汇报结果" in text
+
+    # 显式 cancelled 不算蒸发，不告警
+    result2 = server.call_tool(
+        "update_plan",
+        {
+            **args,
+            "plan": [
+                {"step": "启动服务器并验证", "status": "completed"},
+                {"step": "汇报最终结果", "status": "completed"},
+            ],
+        },
+    )
+    assert "凭空消失" not in result2[0]["text"]
+
+
+def test_update_plan_closure_audit_echoes_original_request(monkeypatch) -> None:
+    _manager, make_ticket = _patch_reply_ticket_manager(monkeypatch)
+    ticket = make_ticket(message="跑个构建然后关服再汇报")
+    ticket.plan = [{"step": "构建", "status": "in_progress"}]
+    server = LocalMCPServer()
+
+    result = server.call_tool(
+        "update_plan",
+        {
+            "item_id": "item-1",
+            "_reply_ticket_id": ticket.ticket_id,
+            "plan": [{"step": "构建", "status": "completed"}],
+        },
+    )
+    assert "收尾审计" in result[0]["text"]
+    assert "跑个构建然后关服再汇报" in result[0]["text"]
+
+    ticket.plan = [{"step": "汇报", "status": "in_progress"}]
+    result2 = server.call_tool(
+        "update_plan",
+        {
+            "item_id": "item-1",
+            "_reply_ticket_id": ticket.ticket_id,
+            "plan": [],
+        },
+    )
+    assert "Plan completed." in result2[0]["text"]
+    assert "收尾审计" in result2[0]["text"]
+
+
+def test_closure_audit_includes_action_ledger_and_undelivered(monkeypatch) -> None:
+    manager, make_ticket = _patch_reply_ticket_manager(monkeypatch)
+    ticket = make_ticket(message="构建然后关服")
+    ticket.plan = [{"step": "构建", "status": "in_progress"}]
+    manager.record_action(ticket.ticket_id, "job OK: gradle build")
+    manager.record_action(ticket.ticket_id, "job FAIL(exit=127): curl → not found")
+    manager.mark_report_undelivered(ticket.ticket_id, "500")
+    server = LocalMCPServer()
+
+    result = server.call_tool(
+        "update_plan",
+        {
+            "item_id": "item-1",
+            "_reply_ticket_id": ticket.ticket_id,
+            "plan": [{"step": "构建", "status": "completed"}],
+        },
+    )
+    text = result[0]["text"]
+    assert "收尾审计" in text
+    assert "构建然后关服" in text
+    assert "job OK: gradle build" in text
+    assert "job FAIL(exit=127): curl → not found" in text
+    assert "未送达" in text
+
+
+def test_record_action_caps_ledger_and_report_flags_roundtrip(monkeypatch) -> None:
+    manager, make_ticket = _patch_reply_ticket_manager(monkeypatch)
+    ticket = make_ticket(message="x")
+
+    for i in range(15):
+        manager.record_action(ticket.ticket_id, f"action-{i}")
+    assert len(ticket.action_ledger) == 12
+    assert ticket.action_ledger[0] == "action-3"
+
+    manager.mark_report_undelivered(ticket.ticket_id, "500")
+    undelivered = manager.undelivered_reports_for_item("item-1")
+    assert len(undelivered) == 1
+    assert undelivered[0]["ticket_id"] == ticket.ticket_id
+
+    manager.mark_report_delivered(ticket.ticket_id)
+    assert manager.undelivered_reports_for_item("item-1") == []
+    assert any("已送达" in line for line in ticket.action_ledger)
 
 
 def test_plan_reminder_reads_plan_of_owning_ticket(monkeypatch) -> None:

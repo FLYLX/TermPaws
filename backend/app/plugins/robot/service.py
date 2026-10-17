@@ -2351,6 +2351,25 @@ class RobotService:
             finally:
                 clear_integration_chat_contexts(agent, contexts)
 
+            # 同会话同文本的活跃票据 = 疑似重复请求（用户重发/网络重试）。
+            # 只在票据上留提示信息，是否按重复处理由模型判断。
+            try:
+                duplicate = reply_ticket_manager.find_active_duplicate(
+                    robot_id=str(robot.id),
+                    conversation_key=conversation_key,
+                    request_message=ticket.request_message,
+                    exclude_ticket_id=ticket.ticket_id,
+                )
+                if duplicate is not None:
+                    reply_ticket_manager.mark_duplicate_of(
+                        ticket.ticket_id, duplicate.ticket_id
+                    )
+            except Exception:
+                logger.debug(
+                    "[RobotService] duplicate ticket detection failed",
+                    exc_info=True,
+                )
+
             agent_session.process_input(
                 InputMessage(
                     input_type=InputType.CHAT,

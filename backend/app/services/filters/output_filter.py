@@ -23,6 +23,7 @@ class FilterRule:
     regex_patterns: list[str] = field(default_factory=list)
     action_type: str = "ignore"
     replace_rules: dict[str, str] = field(default_factory=dict)
+    reason: str = ""
     _compiled_patterns: list[re.Pattern] = field(default_factory=list, repr=False)
 
     def __post_init__(self):
@@ -67,6 +68,7 @@ class OutputFilterConfig:
                     regex_patterns=filter_config.get("regex_patterns", []),
                     action_type=filter_config.get("action_type", "ignore"),
                     replace_rules=action.get("replace_rules", {}),
+                    reason=filter_config.get("reason", ""),
                 )
                 filters.append(filter_rule)
         
@@ -143,7 +145,9 @@ class OutputFilter:
 
             if filter_rule.action_type == "block":
                 has_block = True
-                block_reason = f"Blocked by filter '{filter_rule.name}': {matches[0].re.pattern}"
+                block_reason = filter_rule.reason or (
+                    f"Blocked by filter '{filter_rule.name}': {matches[0].re.pattern}"
+                )
                 break
                 
             elif filter_rule.action_type == "ignore":

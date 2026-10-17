@@ -20,6 +20,10 @@ TICKET_TTL = timedelta(hours=6)
 # was last touched (plan updates and turn activity refresh it).
 PLAN_LOOKUP_FRESH_SECONDS = 30 * 60
 QQ_TICKET_SUPERSEDE_REASON = "superseded by newer QQ message"
+
+# 首轮宽限期：票据创建到第一笔 update_plan 之间可能有很长一段工具执行
+# （复杂任务几分钟都正常）。窗口内的票据绝不被同会话新消息顶掉。
+QQ_TICKET_FIRST_TURN_GRACE_SECONDS = 240.0
 CURRENT_QQ_MESSAGE_MARKER = "[Current QQ message]"
 CQ_CODE_RE = re.compile(r"\[CQ:[^\]]+\]", re.IGNORECASE)
 
@@ -127,6 +131,9 @@ def ticket_from_payload(payload: dict[str, Any]) -> ReplyTicket:
     kwargs["updated_at"] = _parse_dt(kwargs.get("updated_at")) or datetime.now()
     kwargs["delivered_at"] = _parse_dt(kwargs.get("delivered_at"))
     kwargs["reply_target"] = dict(kwargs.get("reply_target") or {})
+    kwargs["inherited_debts"] = [
+        dict(entry) for entry in (kwargs.get("inherited_debts") or []) if isinstance(entry, dict)
+    ]
     return ReplyTicket(**kwargs)
 
 
@@ -228,6 +235,20 @@ class ReplyTicket:
     # 结果由 backend 轮询线程送回，但进程重启后线程消亡——持久化这些 id
     # 让 resume sweep 能重新接管：向 daemon 拉取已完成的结果并注入。
     pending_job_ids: list[str] = field(default_factory=list)
+    # 执行证据账本：关键动作的极简一行式记录（job 结果、QQ 送达状态）。
+    # 收尾审计时回显给模型自查——证据链不依赖会滚动的对话窗口。
+    action_ledger: list[str] = field(default_factory=list)
+    # 最终汇报是否卡在通道故障里（未送达）。发送成功清除；票据被
+    # supersede 时也清除（新轮次接管汇报义务）。
+    report_undelivered: bool = False
+    # 接管来的汇报义务：本票据 supersede 了别的 QQ 票据时，把对方
+    # 尚未回复的来源路由+原请求搬到这里（结构跟随任务，不随旧票据消失）。
+    # 每条 {target_type, target_id, sender_label, request, from_ticket_id}；
+    # 向对应 target 发送成功后由 mark_debt_fulfilled 核销。
+    inherited_debts: list[dict] = field(default_factory=list)
+    # 内容完全相同的活跃票据 id（同会话同文本在飞来）。只作信息提示，
+    # 是否按重复处理由模型判断。
+    duplicate_of: str = ""
 
     @property
     def is_qq(self) -> bool:
@@ -365,12 +386,38 @@ class ReplyTicketManager:
             # superseded.
             if ticket.plan:
                 continue
+            # 年轻票据可能正处在"已创建、还没写下第一笔计划"的首轮窗口里
+            # （任务越复杂这个窗口越长）。直接关掉会把正在跑的轮次的回复
+            # 路由埋掉——跳过它，让它自己的轮次收尾。
+            age_seconds = (now - ticket.created_at).total_seconds()
+            if age_seconds < QQ_TICKET_FIRST_TURN_GRACE_SECONDS:
+                continue
+            # 有执行痕迹（ledger/命令/后台 job）的老票据：任务跑过却没汇报，
+            # 回复义务转移给新票据，由模型判断补回还是说明。
+            has_traces = bool(
+                ticket.action_ledger or ticket.command or ticket.pending_job_ids
+            )
             if ticket.external_report_sent:
                 ticket.status = "delivered"
                 ticket.delivered_at = now
+            elif has_traces:
+                ticket.status = "failed"
+                ticket.delivery_error = QQ_TICKET_SUPERSEDE_REASON
+                if isinstance(ticket.reply_target, dict) and ticket.reply_target.get("target_id"):
+                    new_ticket.inherited_debts.append({
+                        "target_type": str(ticket.reply_target.get("target_type") or ""),
+                        "target_id": str(ticket.reply_target.get("target_id") or ""),
+                        "sender_label": str(ticket.sender_label or ""),
+                        "request": str(ticket.request_message or "")[:200],
+                        "from_ticket_id": ticket.ticket_id,
+                    })
+                    new_ticket.updated_at = now
+                    _persist_ticket(new_ticket)
             else:
                 ticket.status = "failed"
                 ticket.delivery_error = QQ_TICKET_SUPERSEDE_REASON
+            # 新轮次接管汇报义务，旧票据不再算"未送达"
+            ticket.report_undelivered = False
             ticket.updated_at = now
             _persist_ticket(ticket)
             logger.info(
@@ -616,13 +663,22 @@ class ReplyTicketManager:
         return self.supersede_plan(ticket_id, "", explanation=explanation)
 
     def supersede_plan(
-        self, ticket_ref: str, item_id: str, *, explanation: str = "superseded"
+        self,
+        ticket_ref: str,
+        item_id: str,
+        *,
+        explanation: str = "superseded",
+        inherit_to_ticket_id: str = "",
     ) -> list[dict] | None:
         """关闭同一任务旧票据上的计划（agent 接管任务时调用）。
 
         支持完整 id 或唯一前缀（提示词里只暴露前 8 位）。步骤标记
         cancelled 后清除并持久化+广播——旧计划立即从条带消失，
         不会被 resume sweep 续跑。无匹配返回 None。
+
+        inherit_to_ticket_id 给出时，若旧票据是还没回复来源的 QQ 票据，
+        把它的回复义务（路由+原请求）转移到接管票据的 inherited_debts，
+        义务跟着任务走，不随旧票据消失。
         """
         ref = str(ticket_ref or "").strip()
         if not ref:
@@ -653,7 +709,44 @@ class ReplyTicketManager:
             ]
             ticket.plan = []
             ticket.updated_at = datetime.now()
-            _persist_ticket(ticket)
+
+            inherit = self._tickets.get(
+                self._resolve_ticket_id_locked(inherit_to_ticket_id)
+            ) if inherit_to_ticket_id else None
+            if (
+                inherit is not None
+                and inherit.ticket_id != ticket.ticket_id
+                and ticket.is_qq
+                and not ticket.external_report_sent
+                and ticket.status not in {"delivered", "sending"}
+                and isinstance(ticket.reply_target, dict)
+                and ticket.reply_target.get("target_id")
+            ):
+                debt = {
+                    "target_type": str(ticket.reply_target.get("target_type") or ""),
+                    "target_id": str(ticket.reply_target.get("target_id") or ""),
+                    "sender_label": str(ticket.sender_label or ""),
+                    "request": str(ticket.request_message or "")[:200],
+                    "from_ticket_id": ticket.ticket_id,
+                }
+                known = {
+                    (str(d.get("target_type")), str(d.get("target_id")), str(d.get("from_ticket_id")))
+                    for d in inherit.inherited_debts
+                }
+                key = (debt["target_type"], debt["target_id"], debt["from_ticket_id"])
+                if key not in known:
+                    inherit.inherited_debts.append(debt)
+                    inherit.action_ledger = (
+                        inherit.action_ledger
+                        + [f"接管汇报义务：QQ {debt['target_type']}:{debt['target_id']}（票据 {ticket.ticket_id[:8]}）"]
+                    )[-12:]
+                    inherit.updated_at = datetime.now()
+                    _persist_ticket(inherit)
+                    ticket.action_ledger = (
+                        ticket.action_ledger
+                        + [f"汇报义务已移交给票据 {inherit.ticket_id[:8]}"]
+                    )[-12:]
+                    _persist_ticket(ticket)
         try:
             from app.services.agent.stream_manager import stream_manager
 
@@ -795,6 +888,219 @@ class ReplyTicketManager:
             ticket.updated_at = datetime.now()
             _persist_ticket(ticket)
 
+    def record_action(self, ticket_id: str, line: str, *, cap: int = 12) -> None:
+        """追加一条极简执行证据（一行），超出上限丢最旧的。"""
+        line = str(line or "").strip()
+        if not line:
+            return
+        with self._lock:
+            ticket_id = self._resolve_ticket_id_locked(ticket_id)
+            ticket = self._tickets.get(ticket_id)
+            if not ticket:
+                return
+            ticket.action_ledger = (ticket.action_ledger + [line])[-cap:]
+            ticket.updated_at = datetime.now()
+            _persist_ticket(ticket)
+
+    def mark_report_undelivered(self, ticket_id: str, error: str = "") -> None:
+        """QQ 汇报发送失败（通道故障）：立起"未送达"标记，直到补发成功。"""
+        with self._lock:
+            ticket_id = self._resolve_ticket_id_locked(ticket_id)
+            ticket = self._tickets.get(ticket_id)
+            if not ticket:
+                return
+            ticket.report_undelivered = True
+            detail = str(error or "").strip()[:60]
+            line = f"QQ 汇报发送失败{('：' + detail) if detail else ''}（未送达）"
+            ticket.action_ledger = (ticket.action_ledger + [line])[-12:]
+            ticket.updated_at = datetime.now()
+            _persist_ticket(ticket)
+
+    def mark_report_delivered(self, ticket_id: str) -> None:
+        """QQ 发送成功：清除"未送达"标记。"""
+        with self._lock:
+            ticket_id = self._resolve_ticket_id_locked(ticket_id)
+            ticket = self._tickets.get(ticket_id)
+            if not ticket or not ticket.report_undelivered:
+                return
+            ticket.report_undelivered = False
+            ticket.action_ledger = (ticket.action_ledger + ["QQ 汇报已送达"])[-12:]
+            ticket.updated_at = datetime.now()
+            _persist_ticket(ticket)
+
+    def undelivered_reports_for_item(self, item_id: str) -> list[dict[str, Any]]:
+        """该 item 里汇报卡在通道故障中的票据（供 prompt 固定注入）。"""
+        with self._lock:
+            return [
+                {"ticket_id": ticket.ticket_id, "request": ticket.request_message}
+                for ticket in self._tickets.values()
+                if ticket.item_id == str(item_id) and ticket.report_undelivered
+            ]
+
+    def find_active_duplicate(
+        self,
+        *,
+        robot_id: str,
+        conversation_key: str,
+        request_message: str,
+        exclude_ticket_id: str = "",
+    ) -> ReplyTicket | None:
+        """同会话里内容完全相同且尚未收尾的 QQ 票据（供重复请求提示）。
+
+        只做精确文本相等判断并返回事实，是否按重复处理由模型决定。
+        """
+        text = str(request_message or "").strip()
+        if not (robot_id and conversation_key and text):
+            return None
+        with self._lock:
+            candidates = [
+                t
+                for t in self._tickets.values()
+                if t.source_type == SOURCE_QQ
+                and t.robot_id == str(robot_id)
+                and t.conversation_key == str(conversation_key)
+                and t.ticket_id != exclude_ticket_id
+                and t.status not in {"delivered", "failed"}
+                and str(t.request_message or "").strip() == text
+            ]
+            if not candidates:
+                return None
+            candidates.sort(key=lambda t: t.created_at)
+            return candidates[0]
+
+    def mark_duplicate_of(self, ticket_id: str, other_ticket_id: str) -> None:
+        with self._lock:
+            ticket = self._tickets.get(self._resolve_ticket_id_locked(ticket_id))
+            other = self._tickets.get(self._resolve_ticket_id_locked(other_ticket_id))
+            if ticket is None or other is None or ticket.ticket_id == other.ticket_id:
+                return
+            ticket.duplicate_of = other.ticket_id
+            ticket.updated_at = datetime.now()
+            _persist_ticket(ticket)
+
+    def active_sibling_summary(
+        self,
+        *,
+        robot_id: str,
+        conversation_key: str,
+        exclude_ticket_id: str = "",
+    ) -> list[dict[str, Any]]:
+        """同会话里仍在飞的其它 QQ 票据摘要（供票据 prompt 注入）。
+
+        同一件事被拆成多张票据（重发、乱码重发、补充追问）时，各票据互相
+        看不见就会重复执行/重复汇报。这里只提供事实清单，合并、接管还是
+        各回各的，由模型判断。
+        """
+        if not (robot_id and conversation_key):
+            return []
+        with self._lock:
+            siblings = []
+            for t in self._tickets.values():
+                if (
+                    t.source_type != SOURCE_QQ
+                    or t.robot_id != str(robot_id)
+                    or t.conversation_key != str(conversation_key)
+                    or t.ticket_id == exclude_ticket_id
+                    or t.status in {"delivered", "failed", "sending"}
+                ):
+                    continue
+                open_steps = [
+                    str(step.get("step") or "")[:40]
+                    for step in t.plan
+                    if str(step.get("status") or "") not in {"completed", "cancelled"}
+                ]
+                siblings.append({
+                    "ticket_id": t.ticket_id[:8],
+                    "request": str(t.request_message or "")[:60],
+                    "open_steps": open_steps,
+                    "reported": bool(t.external_report_sent),
+                })
+            siblings.sort(key=lambda s: s["ticket_id"])
+            return siblings
+
+    def mark_debt_fulfilled(
+        self, ticket_id: str, *, target_type: str, target_id: str
+    ) -> None:
+        """向某 target 发送成功后，核销本票据上对应该来源的接管债务。"""
+        with self._lock:
+            ticket = self._tickets.get(self._resolve_ticket_id_locked(ticket_id))
+            if ticket is None or not ticket.inherited_debts:
+                return
+            remaining = [
+                d
+                for d in ticket.inherited_debts
+                if not (
+                    str(d.get("target_type") or "") == str(target_type)
+                    and str(d.get("target_id") or "") == str(target_id)
+                )
+            ]
+            if len(remaining) == len(ticket.inherited_debts):
+                return
+            ticket.inherited_debts = remaining
+            ticket.action_ledger = (
+                ticket.action_ledger
+                + [f"接管汇报已送达：QQ {target_type}:{target_id}"]
+            )[-12:]
+            ticket.updated_at = datetime.now()
+            _persist_ticket(ticket)
+
+    def pending_report_debts(self, item_id: str) -> list[dict[str, Any]]:
+        """该 item 当前所有未了结的 QQ 汇报义务（供 prompt 注入，模型自行判断）。
+
+        覆盖三种来源：
+        - undelivered：汇报发送失败（通道故障），等待补发；
+        - inherited：本票据接管了别的票据的任务，对方来源还没收到结果；
+        - open_task：QQ 票据任务在跑且尚未向来源汇报（合并轮次里提醒各回各家）。
+        """
+        debts: list[dict[str, Any]] = []
+        with self._lock:
+            tickets = [
+                t for t in self._tickets.values() if t.item_id == str(item_id)
+            ]
+            for ticket in tickets:
+                if ticket.report_undelivered and ticket.is_qq:
+                    debts.append({
+                        "kind": "undelivered",
+                        "target_type": str(ticket.reply_target.get("target_type") or ""),
+                        "target_id": str(ticket.reply_target.get("target_id") or ""),
+                        "sender_label": str(ticket.sender_label or ""),
+                        "request": str(ticket.request_message or "")[:120],
+                        "ticket_id": ticket.ticket_id[:8],
+                    })
+                for debt in ticket.inherited_debts:
+                    debts.append({
+                        "kind": "inherited",
+                        "target_type": str(debt.get("target_type") or ""),
+                        "target_id": str(debt.get("target_id") or ""),
+                        "sender_label": str(debt.get("sender_label") or ""),
+                        "request": str(debt.get("request") or "")[:120],
+                        "ticket_id": str(debt.get("from_ticket_id") or "")[:8],
+                    })
+                if (
+                    ticket.is_qq
+                    and plan_has_open_steps(ticket.plan)
+                    and not ticket.external_report_sent
+                    and ticket.status not in {"delivered", "failed", "sending"}
+                ):
+                    debts.append({
+                        "kind": "open_task",
+                        "target_type": str(ticket.reply_target.get("target_type") or ""),
+                        "target_id": str(ticket.reply_target.get("target_id") or ""),
+                        "sender_label": str(ticket.sender_label or ""),
+                        "request": str(ticket.request_message or "")[:120],
+                        "ticket_id": ticket.ticket_id[:8],
+                    })
+        seen: set[tuple[str, str, str]] = set()
+        unique: list[dict[str, Any]] = []
+        for entry in debts:
+            key = (entry["kind"], entry["target_type"], entry["target_id"])
+            if entry["kind"] != "open_task" and key in seen:
+                continue
+            seen.add(key)
+            unique.append(entry)
+        return unique
+
+
     def mark_completed(self, ticket_id: str) -> None:
         with self._lock:
             ticket_id = self._resolve_ticket_id_locked(ticket_id)
@@ -814,6 +1120,11 @@ class ReplyTicketManager:
                 return
             ticket.status = "failed"
             ticket.delivery_error = str(error or "")
+            # 真实的投递失败（非 supersede/看门狗收尾）意味着汇报没送到用户——
+            # 立起未送达标记，让固定注入持续提醒补发，直到成功。
+            error_text = str(error or "")
+            if error_text and error_text != QQ_TICKET_SUPERSEDE_REASON and "watchdog" not in error_text:
+                ticket.report_undelivered = True
             ticket.updated_at = datetime.now()
             _persist_ticket(ticket)
 

@@ -48,32 +48,42 @@ def _check_routes(scenario: dict, sends) -> list[str]:
 
 def _check_files(api: TermManApi, scenario: dict) -> list[str]:
     failures: list[str] = []
-    for path, musts, forbids in scenario.get("expect_files", []):
-        try:
-            content = api.read_remote_file(path)
-        except Exception as exc:
-            failures.append(f"读不到远端文件 {path}: {exc}")
+    for entry in scenario.get("expect_files", []):
+        paths, musts, forbids = entry
+        # 路径可以是候选列表：agent 自己命名文件时文件名不固定，
+        # 任一候选命中即算（内容断言在第一个可读文件上做）。
+        candidates = [paths] if isinstance(paths, str) else list(paths)
+        content = None
+        used = candidates[0]
+        errors = []
+        for candidate in candidates:
+            try:
+                content = api.read_remote_file(candidate)
+                used = candidate
+                break
+            except Exception as exc:
+                errors.append(f"{candidate}: {exc}")
+        if content is None:
+            failures.append(f"远端文件都读不到：{'; '.join(errors)}")
             continue
         for kw in musts:
             if kw not in content:
-                failures.append(f"{path} 缺少「{kw}」")
+                failures.append(f"{used} 缺少「{kw}」")
         for kw in forbids:
             if kw in content:
-                failures.append(f"{path} 不应包含「{kw}」")
+                failures.append(f"{used} 不应包含「{kw}」")
     return failures
 
 
 def run_scenario(name: str, api: TermManApi) -> dict:
     scenario = SCENARIOS[name]
     sim = OnebotSim(WS_URL, access_token="test", self_id=123456)
-    for delay, message in scenario.get("web", []):
-        if delay == 0:
-            api.chat_async(message)
-        else:
-            import threading
-
-            threading.Timer(delay, api.chat_async, args=(message,)).start()
-    asyncio.run(sim.run(scenario["steps"], duration_s=scenario["wait_s"]))
+    web_steps = [
+        (delay, (lambda m=message: api.chat_async(m)))
+        for delay, message in scenario.get("web", [])
+    ]
+    asyncio.run(sim.run(scenario["steps"], duration_s=scenario["wait_s"],
+                        web_steps=web_steps))
     time.sleep(5)
     failures = _check_routes(scenario, sim.sends)
     failures.extend(_check_files(api, scenario))

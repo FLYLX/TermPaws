@@ -22,8 +22,8 @@ def _creeper_file() -> str:
     return f"{BASE}/world/datapacks/creeper_resist/data/creeper_resist/functions/tick.mcfunction"
 
 
-def _tick_file() -> str:
-    return f"{BASE}/world/datapacks/jump_speed/data/jump_speed/functions/tick.mcfunction"
+def _skeleton_file() -> str:
+    return f"{BASE}/world/datapacks/skeleton_regen/data/skeleton_regen/functions/give_regen.mcfunction"
 
 
 SCENARIOS = {
@@ -76,8 +76,7 @@ SCENARIOS = {
         "wait_s": 1200,
         "expect_files": [
             (f"{BASE}/server.properties", ["max-players=85"], []),
-            (f"{BASE}/world/datapacks/skeleton_regen/data/skeleton_regen/functions/give_regen.mcfunction",
-             ["regeneration 2 "], []),
+            (_skeleton_file(), ["regeneration 2 "], []),
             (f"{BASE}/config/ftbquests/quests/chapters/meiriqiandao.snbt", ["count: 24L"], []),
         ],
         "expect_routes": [
@@ -85,6 +84,40 @@ SCENARIOS = {
             {"target": ("group", 1002), "must": ["100"], "forbid": ["85"]},
             {"target": ("private", 3001), "must": ["2"], "forbid": []},
             {"target": ("private", 3002), "must": [], "forbid": ["85", "90", "skeleton"]},
+        ],
+        "forbid_global": [],
+    },
+    # QQ 多会话多文件任务 + web 双任务 + 重复 + 催促：全链路文件修改
+    "multi_file_mayhem": {
+        "steps": [
+            (0, OnebotSim.group(1001, 2001, "甲", "paws 把 server.properties 的 motd 改成 StickerLand，改完确认")),
+            (20, OnebotSim.group(1001, 2001, "甲", "paws 再把 max-players 改成 88")),
+            (25, OnebotSim.group(1002, 2003, "丙", "paws 新建一个数据包：玩家击杀蝙蝠获得 4 秒夜视，命名空间 bat_vision，reload 验证再回复")),
+            (30, OnebotSim.private(3001, "戊", "paws 把「年度目标」章节的玻璃任务数量改成 32 个，改完 ftbquests reload 确认再告诉我")),
+            (45, OnebotSim.group(1002, 2003, "丙", "paws 好了没")),
+            (70, OnebotSim.private(3001, "戊", "paws 把「年度目标」章节的玻璃任务数量改成 32 个，改完 ftbquests reload 确认再告诉我")),
+            (90, OnebotSim.group(1003, 2004, "丁", "paws 现在 view-distance 是多少")),
+        ],
+        "web": [
+            (0, "W：把 creeper_resist 数据包的抗性持续时间改成 12 秒，reload 验证后回复我"),
+            (60, "W2：把「每日签到」章节里收集圆石任务的奖励改成 4 个火把，reload 确认后回复"),
+        ],
+        "wait_s": 1500,
+        "expect_files": [
+            (f"{BASE}/server.properties", ["motd=StickerLand", "max-players=88"], []),
+            ([
+                f"{BASE}/world/datapacks/bat_vision/data/bat_vision/functions/give_night_vision.mcfunction",
+                f"{BASE}/world/datapacks/bat_vision/data/bat_vision/functions/give_vision.mcfunction",
+                f"{BASE}/world/datapacks/bat_vision/data/bat_vision/functions/tick.mcfunction",
+            ], ["night_vision 4"], []),
+            (f"{BASE}/config/ftbquests/quests/chapters/niandumubiao.snbt", ["count: 32L"], []),
+            (_creeper_file(), ["resistance 12"], []),
+        ],
+        "expect_routes": [
+            {"target": ("group", 1001), "must": ["StickerLand", "88"], "forbid": ["蝙蝠", "night_vision"]},
+            {"target": ("group", 1002), "must": [], "forbid": ["StickerLand"]},
+            {"target": ("private", 3001), "must": ["32"], "forbid": []},
+            {"target": ("group", 1003), "must": [], "forbid": ["StickerLand", "32"]},
         ],
         "forbid_global": [],
     },

@@ -69,7 +69,11 @@ class OnebotSim:
             ev["group_id"] = spec["group_id"]
         return ev
 
-    async def run(self, steps: list[tuple[float, dict[str, Any]]], *, duration_s: float):
+    async def run(self, steps: list[tuple[float, dict[str, Any]]], *,
+                  duration_s: float,
+                  web_steps: list[tuple[float, Any]] | None = None):
+        """web_steps: [(delay_s, 无参回调)] 与 QQ 时间线共用同一个调度循环，
+        避免 Timer 线程在 WMI 托管进程里被回收。"""
         import websockets
 
         headers = {"Authorization": f"Bearer {self.access_token}",
@@ -78,12 +82,18 @@ class OnebotSim:
                                       ping_interval=None) as ws:
             t0 = time.time()
             sent = 0
+            web_sent = 0
+            web_steps = web_steps or []
             deadline = t0 + duration_s
             while time.time() < deadline:
-                while sent < len(steps) and time.time() - t0 >= steps[sent][0]:
+                now = time.time() - t0
+                while sent < len(steps) and now >= steps[sent][0]:
                     await ws.send(json.dumps(self._event(steps[sent][1]),
                                              ensure_ascii=False))
                     sent += 1
+                while web_sent < len(web_steps) and now >= web_steps[web_sent][0]:
+                    web_steps[web_sent][1]()
+                    web_sent += 1
                 try:
                     raw = await asyncio.wait_for(ws.recv(), timeout=10)
                 except asyncio.TimeoutError:

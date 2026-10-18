@@ -444,7 +444,12 @@ class RobotAgentIntegration:
         if agent_context is None:
             return
 
-        should_remove_robot_mcp = bool(getattr(agent_context, "robot_mcp_server_transient", False))
+        # robot 工具是轮次级的：clear 只在轮次边界调用（轮次开头防御性
+        # 清理 / QQ 轮结束收尾），此时一律卸载。旧逻辑只在 transient 标记
+        # 为真时才卸载，而标记在上一轮 clear 时已清零——一次 QQ 轮之后
+        # 工具永远粘在共享 agent 上，web 轮次因此能调 QQ 发送工具（跨渠道
+        # 串味的工具侧根源）。静态配置（handler/技能）显式启用的不卸。
+        statically_enabled = self._robot_mcp_statically_enabled(agent)
         unregister_robot_mcp_context(getattr(agent_context, "robot_context_token", ""))
         agent_context.robot_id = ""
         agent_context.robot_sender_key = ""
@@ -454,13 +459,31 @@ class RobotAgentIntegration:
         agent_context.robot_known_targets = []
         agent_context.robot_backend_target_resolution_enabled = False
         agent_context.robot_mcp_server_transient = False
-        if should_remove_robot_mcp and ROBOT_MCP_SERVER_NAME in agent._mcp_servers:
+        if (
+            not statically_enabled
+            and ROBOT_MCP_SERVER_NAME in agent._mcp_servers
+        ):
             agent._mcp_servers = [
                 server_name
                 for server_name in agent._mcp_servers
                 if server_name != ROBOT_MCP_SERVER_NAME
             ]
             agent._load_mcp_tools()
+
+    def _robot_mcp_statically_enabled(self, agent: Agent) -> bool:
+        context = _robot_context(agent)
+        if context is None:
+            return False
+        if ROBOT_MCP_SERVER_NAME in set(getattr(context, "enabled_mcp_servers", []) or []):
+            return True
+        from app.services.agent.skills.loader import skill_loader
+
+        skills = getattr(context, "enabled_skills", []) or []
+        for skill_id in skills:
+            skill = skill_loader.get(skill_id)
+            if skill and ROBOT_MCP_SERVER_NAME in (skill.mcp_servers or []):
+                return True
+        return False
 
     def inject_tool_args(
         self,
@@ -702,12 +725,15 @@ class RobotAgentIntegration:
 
     def clear_terminal_alert_tools(self, agent: Agent) -> None:
         context = _robot_context(agent)
-        if context is None or not getattr(context, "robot_mcp_server_transient", False):
+        if context is None:
             return
         if getattr(context, "robot_id", ""):
             return
-
+        # 与 clear_chat_context 同一条不变量：无 QQ 上下文时工具即卸载，
+        # 不看 transient 标记（标记可能在上一轮清理中被提前清零）。
         context.robot_mcp_server_transient = False
+        if self._robot_mcp_statically_enabled(agent):
+            return
         if ROBOT_MCP_SERVER_NAME in agent._mcp_servers:
             agent._mcp_servers = [
                 server_name
@@ -768,50 +794,13 @@ class RobotAgentIntegration:
                 f"This works even without active QQ context.\n"
             )
         ticket_id = str(getattr(ticket, "ticket_id", "") or "")
-        duplicate_hint = ""
-        duplicate_of = str(getattr(ticket, "duplicate_of", "") or "").strip()
-        if duplicate_of:
-            duplicate_hint = (
-                f"- POSSIBLE DUPLICATE: 同会话已有一张内容完全相同的活跃票据 "
-                f"{duplicate_of[:8]}。先判断：若只是重复请求（重发/催问），不要重复执行，"
-                "直接说明已在处理或引用进度即可；若带有新意图再正常处理。\n"
-            )
-        siblings_hint = ""
-        robot_id = str(getattr(ticket, "robot_id", "") or "").strip()
-        if robot_id and conv_key:
-            try:
-                from app.services.agent.reply_ticket import reply_ticket_manager
-
-                siblings = reply_ticket_manager.active_sibling_summary(
-                    robot_id=robot_id,
-                    conversation_key=conv_key,
-                    exclude_ticket_id=ticket_id,
-                )
-            except Exception:
-                siblings = []
-            if siblings:
-                lines = [
-                    f"  - 票据 {s['ticket_id']}「{s['request']}」"
-                    + (
-                        f"（进行中：{'；'.join(s['open_steps'])}）"
-                        if s["open_steps"]
-                        else ("（已汇报）" if s["reported"] else "（待处理）")
-                    )
-                    for s in siblings[:4]
-                ]
-                siblings_hint = (
-                    "- 同会话其它在途票据：\n"
-                    + "\n".join(lines)
-                    + "\n  判断是否与本次是同一件事：是就 update_plan(supersede_ticket_ids=[对方票据号]) "
-                    "接管并合并汇报一次，或仅回复一句进度；不要重复执行、不要分多次汇报同一结果。\n"
-                )
+        # 重复提示与同会话在途票据统一由会话状态卡注入（session 层），
+        # 这里只保留票据身份与回复路由。
         return (
             "Authoritative reply ticket:\n"
             f"- ticket_id: {ticket_id}\n"
             f"- source: QQ ({conv_key or 'current conversation'})\n"
             f"{target_hint}"
-            f"{duplicate_hint}"
-            f"{siblings_hint}"
             "- REPLY ROUTING: to reply to this QQ conversation, call "
             "`mcp_robot_send_message` in your current response (pass only `text`). "
             "Plain final text is NOT auto-delivered. Do not leave answers only in TermPaws.\n"

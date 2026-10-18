@@ -429,6 +429,75 @@ def _build_memory_retrieval_query(
     return f"{normalized_query}\nPrevious conversation context:\n" + "\n".join(prior_parts)
 
 
+def _event_channel_key(event: dict[str, Any]) -> str:
+    """事件的渠道键（qq 会话 / web）。无法归类的一律返回空串（不折叠）。"""
+    event_type = str(event.get("type") or "")
+    if event_type == "qq_user":
+        parts = str(event.get("sender_key") or "").split(":")
+        if len(parts) >= 3:
+            return f"{parts[1]}:{parts[2]}"
+        return "qq"
+    if event_type == "chat_user":
+        return "web"
+    return ""
+
+
+def _fold_foreign_channel_events(
+    events: list[dict[str, Any]],
+    current_channel: str,
+    *,
+    keep_per_channel: int = 2,
+) -> list[dict[str, Any]]:
+    """非当前渠道的用户输入，每渠道只留最近 keep_per_channel 条全文，
+    更早的折叠成一行摘要（机械截断，无内容规则）。
+
+    只折叠用户输入事件；assistant/terminal 事件是共享上下文（含机器人
+    自己说过的话——折掉它反而会诱发重复汇报），永远保留。
+    """
+    if not current_channel:
+        return events
+    keep_count: dict[str, int] = {}
+    folded: dict[str, list[dict[str, Any]]] = {}
+    result_reversed: list[dict[str, Any]] = []
+    for event in reversed(events):
+        channel = _event_channel_key(event)
+        if not channel or channel == current_channel:
+            result_reversed.append(event)
+            continue
+        keep_count[channel] = keep_count.get(channel, 0) + 1
+        if keep_count[channel] <= keep_per_channel:
+            result_reversed.append(event)
+        else:
+            folded.setdefault(channel, []).append(event)
+    result = list(reversed(result_reversed))
+    if not folded:
+        return result
+    # 摘要行插到该渠道最早被保留事件的前面，保持时间序
+    digests: dict[str, dict[str, Any]] = {}
+    for channel, old_events in folded.items():
+        preview = str(old_events[0].get("content") or "")[:60].replace("\n", " ")
+        digests[channel] = {
+            "role": "user",
+            "type": "folded_foreign_history",
+            "content": (
+                f"[其它渠道折叠] {channel} 在此之前的 {len(old_events)} 条消息从略，"
+                f"最早一条大意：「{preview}」。只是背景，不需要回应。"
+            ),
+        }
+    out: list[dict[str, Any]] = []
+    inserted: set[str] = set()
+    for event in result:
+        channel = _event_channel_key(event)
+        if channel in digests and channel not in inserted:
+            out.append(digests[channel])
+            inserted.add(channel)
+        out.append(event)
+    for channel, digest in digests.items():
+        if channel not in inserted:
+            out.insert(0, digest)
+    return out
+
+
 def _collect_recent_context_messages(
     agent: "Agent",
     item_id: str,
@@ -466,8 +535,21 @@ def _collect_recent_context_messages(
         if len(filtered_events) >= max_messages:
             break
 
+    current_channel = ""
+    try:
+        context = getattr(agent, "_context", None)
+        current_channel = str(
+            getattr(context, "robot_conversation_key", "") or ""
+        ).strip()
+        if not current_channel and not str(getattr(context, "robot_id", "") or "").strip():
+            current_channel = "web"
+    except Exception:
+        current_channel = ""
+    chronological = list(reversed(filtered_events))
+    chronological = _fold_foreign_channel_events(chronological, current_channel)
+
     context_messages: list[dict[str, str]] = []
-    for event in reversed(filtered_events):
+    for event in chronological:
         model_message = _event_to_model_message(event)
         if model_message:
             context_messages.append(model_message)

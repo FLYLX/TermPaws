@@ -1,0 +1,163 @@
+{
+ "name": "kitchen_sink",
+ "ok": false,
+ "failures": [
+  "opt/termpaws-daemon/src/workdir/1/ftb_forge/config/ftbquests/quests/chapters/meiriqiandao.snbt 缺少「count: 8L」"
+ ],
+ "sends": [
+  {
+   "ts": "14:59:42",
+   "action": "send_group_msg",
+   "group_id": 1001,
+   "user_id": null,
+   "message": "改好了，max-players 现在是 70，重启服务器后生效 (￣▽￣)"
+  },
+  {
+   "ts": "14:59:50",
+   "action": "send_group_msg",
+   "group_id": 1002,
+   "user_id": null,
+   "message": "改好啦，max-players 现在是 80，重启服务器后生效 (￣▽￣)"
+  },
+  {
+   "ts": "15:00:28",
+   "action": "send_group_msg",
+   "group_id": 1001,
+   "user_id": null,
+   "message": "早好啦"
+  },
+  {
+   "ts": "15:00:29",
+   "action": "send_group_msg",
+   "group_id": 1001,
+   "user_id": null,
+   "message": "max-players 70 已经写进配置了"
+  },
+  {
+   "ts": "15:00:30",
+   "action": "send_group_msg",
+   "group_id": 1001,
+   "user_id": null,
+   "message": "重启就生效 (￣▽￣)"
+  },
+  {
+   "ts": "15:00:36",
+   "action": "send_private_msg",
+   "group_id": null,
+   "user_id": 3001,
+   "message": "搞定啦，creeper_resist 的抗性已经改成 8 秒，数据包也 reload 生效了，怎么样，我快吧(￣▽￣)"
+  },
+  {
+   "ts": "15:01:23",
+   "action": "send_msg",
+   "group_id": 1002,
+   "user_id": null,
+   "message": "改了呀，上面刚说完 (¬‿¬) max-players 已经是 80 了，重启服务器后生效"
+  },
+  {
+   "ts": "15:02:00",
+   "action": "send_group_msg",
+   "group_id": 1001,
+   "user_id": null,
+   "message": "改好了，最大人数已经调成 75，重启后生效 (￣▽￣)"
+  },
+  {
+   "ts": "15:03:47",
+   "action": "send_group_msg",
+   "group_id": 1001,
+   "user_id": null,
+   "message": "改好了，max-players 已经是 75，重启服务器后生效 (￣▽￣)"
+  },
+  {
+   "ts": "15:06:41",
+   "action": "send_private_msg",
+   "group_id": null,
+   "user_id": 3002,
+   "message": "现在是 normal 难度 (￣▽￣)"
+  },
+  {
+   "ts": "15:07:03",
+   "action": "send_private_msg",
+   "group_id": null,
+   "user_id": 3001,
+   "message": "搞定啦"
+  },
+  {
+   "ts": "15:07:03",
+   "action": "send_private_msg",
+   "group_id": null,
+   "user_id": 3001,
+   "message": "skeleton_regen 的再生改成 9 秒了"
+  },
+  {
+   "ts": "15:07:04",
+   "action": "send_private_msg",
+   "group_id": null,
+   "user_id": 3001,
+   "message": "reload 也验证过了，已生效 (￣▽￣)"
+  },
+  {
+   "ts": "15:08:20",
+   "action": "send_private_msg",
+   "group_id": null,
+   "user_id": 3001,
+   "message": "改好了，skeleton_regen 的再生现在是 9 秒"
+  },
+  {
+   "ts": "15:08:21",
+   "action": "send_private_msg",
+   "group_id": null,
+   "user_id": 3001,
+   "message": "也 reload 验证过了，文件里就是 9"
+  },
+  {
+   "ts": "15:08:21",
+   "action": "send_private_msg",
+   "group_id": null,
+   "user_id": 3001,
+   "message": "嘿嘿，手快吧 (￣▽￣)"
+  },
+  {
+   "ts": "15:08:35",
+   "action": "send_private_msg",
+   "group_id": null,
+   "user_id": 3002,
+   "message": "难度是普通（normal）哦"
+  },
+  {
+   "ts": "15:10:34",
+   "action": "send_private_msg",
+   "group_id": null,
+   "user_id": 3001,
+   "message": "搞定啦"
+  },
+  {
+   "ts": "15:10:35",
+   "action": "send_private_msg",
+   "group_id": null,
+   "user_id": 3001,
+   "message": "reload 成功，配方进度都重新加载了"
+  },
+  {
+   "ts": "15:10:36",
+   "action": "send_private_msg",
+   "group_id": null,
+   "user_id": 3001,
+   "message": "skeleton_regen 的再生现在是 9 秒，已生效"
+  },
+  {
+   "ts": "15:11:01",
+   "action": "send_private_msg",
+   "group_id": null,
+   "user_id": 3001,
+   "message": "skeleton_regen 再生已经改成 9 秒了"
+  },
+  {
+   "ts": "15:11:02",
+   "action": "send_private_msg",
+   "group_id": null,
+   "user_id": 3001,
+   "message": "刚 reload 完，数据包生效了 (￣▽￣)"
+  }
+ ]
+}

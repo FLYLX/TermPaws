@@ -3145,3 +3145,93 @@ def test_turn_groups_split_by_reply_route() -> None:
     assert groups[0] == [web]
     assert groups[2] == [qb]
     assert groups[3] == [term]
+
+
+def test_foreign_channel_history_folds_beyond_keep_window() -> None:
+    from app.services.agent.prompts.builder import _fold_foreign_channel_events
+
+    def ev(channel, text):
+        if channel == "web":
+            return {"role": "user", "type": "chat_user", "content": text}
+        return {
+            "role": "user",
+            "type": "qq_user",
+            "sender_key": f"onebot_v11:{channel}:2001",
+            "content": text,
+        }
+
+    events = [
+        ev("group:1002", "old-1"),
+        ev("group:1001", "current-1"),
+        ev("group:1002", "old-2"),
+        {"role": "assistant", "type": "agent_response", "content": "bot said"},
+        ev("group:1002", "old-3"),
+        ev("group:1002", "recent-a"),
+        ev("group:1001", "current-2"),
+        ev("group:1002", "recent-b"),
+    ]
+    out = _fold_foreign_channel_events(events, "group:1001")
+    texts = [e["content"] for e in out]
+    # ???????
+    assert "current-1" in texts and "current-2" in texts
+    # ??????? 2 ??????????
+    assert "recent-a" in texts and "recent-b" in texts
+    assert "old-2" not in texts and "old-3" not in texts and "old-1" not in texts
+    fold = [t for t in texts if "其它渠道折叠" in t]
+    assert len(fold) == 1 and "3 条" in fold[0]
+    # assistant ??????
+    assert "bot said" in texts
+    # ????????????????
+    assert texts.index(fold[0]) < texts.index("recent-a")
+    # ????????????
+    assert len(_fold_foreign_channel_events(events, "")) == len(events)
+
+
+def test_robot_mcp_tools_unload_without_transient_flag() -> None:
+    """robot ????? agent ??????? QQ ???????????"""
+    from types import SimpleNamespace
+
+    from app.plugins.robot.agent.integration import RobotAgentIntegration
+
+    integration = RobotAgentIntegration.__new__(RobotAgentIntegration)
+    agent = SimpleNamespace(
+        _mcp_servers=["local", "robot"],
+        _context=SimpleNamespace(
+            robot_id="",
+            robot_context_token="",
+            robot_sender_key="",
+            robot_conversation_key="",
+            robot_reply_context_summary="",
+            robot_known_targets=[],
+            robot_backend_target_resolution_enabled=False,
+            robot_mcp_server_transient=False,
+            enabled_mcp_servers=["local"],
+            enabled_skills=[],
+        ),
+    )
+    agent._load_mcp_tools = lambda: None
+
+    # ?? transient ??????????????????
+    integration.clear_chat_context(agent, {})
+    assert "robot" not in agent._mcp_servers
+    assert "local" in agent._mcp_servers
+
+    # ???????
+    agent2 = SimpleNamespace(
+        _mcp_servers=["local", "robot"],
+        _context=SimpleNamespace(
+            robot_id="",
+            robot_context_token="",
+            robot_sender_key="",
+            robot_conversation_key="",
+            robot_reply_context_summary="",
+            robot_known_targets=[],
+            robot_backend_target_resolution_enabled=False,
+            robot_mcp_server_transient=False,
+            enabled_mcp_servers=["local", "robot"],
+            enabled_skills=[],
+        ),
+    )
+    agent2._load_mcp_tools = lambda: None
+    integration.clear_chat_context(agent2, {})
+    assert "robot" in agent2._mcp_servers

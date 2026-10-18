@@ -1034,7 +1034,7 @@ def test_active_sibling_summary_lists_inflight_tickets() -> None:
 
 
 def test_young_qq_ticket_not_superseded_during_first_turn() -> None:
-    """????????????????????????????"""
+    """首张计划还没写下的年轻票据（首轮窗口内）不被新消息顶掉。"""
     manager = ReplyTicketManager()
     agent, token = _make_qq_agent_and_context()
     try:
@@ -1046,18 +1046,18 @@ def test_young_qq_ticket_not_superseded_during_first_turn() -> None:
             source_type="qq",
         )
         working.command = "sed -i ..."
-        # ?????????????? update_plan??????????
+        # 首轮工具执行进行中（还没 update_plan），同会话来了新消息
         newer = manager.create_for_agent(
             agent,
             item_id="item-1",
             handler_id="handler-1",
-            message="???",
+            message="好了吗",
             source_type="qq",
         )
         assert working.status == "pending"
         assert newer.inherited_debts == []
 
-        # ????????????????????????????
+        # 超过宽限期且有执行痕迹的老票据被顶掉时，义务转移给新票据
         working.created_at = working.created_at - timedelta(seconds=300)
         working.updated_at = working.updated_at - timedelta(seconds=300)
         newer2 = manager.create_for_agent(
@@ -1072,7 +1072,7 @@ def test_young_qq_ticket_not_superseded_during_first_turn() -> None:
         assert newer2.inherited_debts[0]["from_ticket_id"] == working.ticket_id
         assert newer2.inherited_debts[0]["target_id"] == "1001"
 
-        # ???????????????????????
+        # 无执行痕迹的老闲聊票据照常静默关闭，不产生债务
         idle = manager.create_for_agent(
             agent,
             item_id="item-1",
@@ -1117,14 +1117,14 @@ def test_offroute_send_note_warns_when_target_not_in_turn_scope() -> None:
         )
         from app.plugins.robot.contracts import RobotReplyTarget
 
-        # ???????1001?????
+        # 发给本轮来源（1001）：不提醒
         on_route = server._offroute_send_note(
             {"_reply_ticket_id": ticket.ticket_id, "_TermPaws_item_id": "item-1"},
             RobotReplyTarget(target_type="group", target_id="1001"),
         )
         assert on_route == ""
 
-        # ???????1002????
+        # 发给无关会话（1002）：提醒
         off_route = server._offroute_send_note(
             {"_reply_ticket_id": ticket.ticket_id, "_TermPaws_item_id": "item-1"},
             RobotReplyTarget(target_type="group", target_id="1002"),
@@ -1136,7 +1136,7 @@ def test_offroute_send_note_warns_when_target_not_in_turn_scope() -> None:
 
 
 def test_watchdog_skips_ticket_whose_input_is_still_queued(monkeypatch) -> None:
-    """???????????????????????????"""
+    """输入还在会话队列里排队的票据不是孤儿，看门狗不得关闭。"""
     from datetime import timezone
 
     from app.services.agent import task_watchdog
@@ -1283,3 +1283,37 @@ def test_pending_report_debts_expire_after_ttl() -> None:
         assert manager.pending_report_debts("item-1") == []
     finally:
         unregister_robot_mcp_context(token)
+
+
+def test_send_ledger_note_lists_recent_assistant_messages(tmp_path) -> None:
+    from app.plugins.robot.conversation_memory import robot_conversation_memory
+    from app.plugins.robot.mcp.server import RobotMCPServer
+
+    server = RobotMCPServer.__new__(RobotMCPServer)
+    # 账本落盘目录指到临时目录
+    monkeypatch_target = robot_conversation_memory.base_dir
+    robot_conversation_memory.base_dir = tmp_path
+    try:
+        target = RobotReplyTarget(target_type="group", target_id="1001")
+        robot_conversation_memory.append_assistant_message(
+            "robot-1", "group:1001", "max-players 已改成 45"
+        )
+        # 账本回显会忽略 10 秒内的（即"本次刚发的"），把记录时间改到 5 分钟前
+        from datetime import timezone as _tz
+
+        content = robot_conversation_memory.read("robot-1", "group:1001")
+        old_ts = (datetime.now(_tz.utc) - timedelta(minutes=5)).isoformat()
+        import re as _re
+
+        content = _re.sub(r"\[[^\]]+\]", f"[{old_ts}]", content, count=1)
+        robot_conversation_memory.replace("robot-1", "group:1001", content)
+        note = server._send_ledger_note("robot-1", target)
+        assert "max-players" in note
+        assert "账本" in note
+        # 未发过的会话没有账本提示
+        empty = server._send_ledger_note(
+            "robot-1", RobotReplyTarget(target_type="group", target_id="9999")
+        )
+        assert empty == ""
+    finally:
+        robot_conversation_memory.base_dir = monkeypatch_target

@@ -3191,47 +3191,15 @@ class AgentSession:
                 lines.append(f"- 已验证可用工具: {', '.join(verified_tools)}")
             has_content = True
 
-        # 未了结的 QQ 汇报义务：发送失败只在当时告知一次，票据被接管/合并
-        # 后义务也可能跟着丢失。这里把结构上的欠账固定注入，由模型自己判断
-        # 何时补回、回什么——系统不代发。
-        # 只在 QQ 轮次注入：QQ 欠账只能由 QQ 轮次正确偿还；web 轮次看到
-        # 它只会诱发"拿当前任务内容去还旧账"的错发（实测发生过）。
-        report_debts: list[dict] = []
-        try:
-            agent = self.agent
-            robot_active = bool(
-                agent is not None
-                and str(getattr(getattr(agent, "_context", None), "robot_id", "") or "").strip()
-            )
-        except Exception:
-            robot_active = False
-        if robot_active:
-            from app.services.agent.reply_ticket import reply_ticket_manager
-
-            report_debts = reply_ticket_manager.pending_report_debts(self.item_id)
-        for entry in report_debts[:5]:
-            target = f"{entry.get('target_type')}:{entry.get('target_id')}"
-            request = str(entry.get("request") or "")[:40]
-            kind = str(entry.get("kind") or "")
-            if kind == "undelivered":
-                lines.append(
-                    f"- {target}：任务「{request}」的汇报发送失败（未送达），"
-                    "通道恢复后主动补发，不要当成已汇报。"
-                )
-            elif kind == "inherited":
-                lines.append(
-                    f"- {target}：票据 {entry.get('ticket_id')} 的任务「{request}」已由你接管，"
-                    "但原会话还没收到结果——收尾时用 mcp_robot_send_message 显式回复该 target"
-                    "（或确认已回过/不需要回）。"
-                )
-            else:
-                lines.append(
-                    f"- {target}：任务「{request}」进行中，完成后记得回这个来源。"
-                )
-        if report_debts:
+        # 会话状态卡：欠账/在途票据/重复提示合并成一处紧凑注入。
+        # 只在 QQ 轮次注入（web 轮次看到 QQ 欠账会诱发错发，实测过）。
+        state_lines = self._build_conversation_state_lines()
+        if state_lines:
+            lines.append("[会话状态卡]")
+            lines.extend(state_lines)
             lines.append(
-                "以上每个来源的结论各回各家：显式 target_type+target_id 逐个发送；"
-                "不要把别的来源（含 web）的结果发错会话。"
+                "纪律：每个来源的结论各回各家（显式 target 逐个发送）；"
+                "其它渠道的内容只是背景，不要代发；已回过的别重复发。"
             )
             has_content = True
 
@@ -3246,6 +3214,68 @@ class AgentSession:
             "the job callback will automatically start the next turn when it finishes."
         )
         return "\n".join(lines)
+
+    def _build_conversation_state_lines(self) -> list[str]:
+        """一张卡收齐当前 QQ 会话的全部动态状态（欠账/在途票据/重复）。
+
+        分散注入的提示会被几十次工具调用冲淡；合并成固定位置、固定格式
+        的一张卡，模型每轮在同一个地方看到全部事实。
+        """
+        try:
+            agent = self.agent
+            context = getattr(agent, "_context", None)
+            robot_id = str(getattr(context, "robot_id", "") or "").strip()
+        except Exception:
+            return []
+        if not robot_id:
+            return []
+        from app.services.agent.reply_ticket import reply_ticket_manager
+
+        lines: list[str] = []
+        ticket_id = str(getattr(context, "reply_ticket_id", "") or "").strip()
+        ticket = reply_ticket_manager.get(ticket_id) if ticket_id else None
+        conversation_key = str(
+            getattr(ticket, "conversation_key", "") or ""
+        ).strip()
+
+        for entry in reply_ticket_manager.pending_report_debts(self.item_id)[:5]:
+            target = f"{entry.get('target_type')}:{entry.get('target_id')}"
+            request = str(entry.get("request") or "")[:40]
+            kind = str(entry.get("kind") or "")
+            if kind == "undelivered":
+                lines.append(f"- 欠账 {target}：「{request}」汇报未送达，通道恢复后补发")
+            elif kind == "inherited":
+                lines.append(
+                    f"- 欠账 {target}：票据 {entry.get('ticket_id')} 的「{request}」"
+                    "已由你接管，对方还没收到结果"
+                )
+            else:
+                lines.append(f"- 在途 {target}：「{request}」完成后回这个来源")
+
+        if ticket is not None and conversation_key:
+            try:
+                siblings = reply_ticket_manager.active_sibling_summary(
+                    robot_id=robot_id,
+                    conversation_key=conversation_key,
+                    exclude_ticket_id=ticket.ticket_id,
+                )
+            except Exception:
+                siblings = []
+            for sibling in siblings[:3]:
+                progress = "；".join(sibling["open_steps"]) if sibling["open_steps"] else (
+                    "已汇报" if sibling["reported"] else "待处理"
+                )
+                lines.append(
+                    f"- 同会话票据 {sibling['ticket_id']}「{sibling['request']}」（{progress}）"
+                    "——同一件事就接管合并汇报一次，别重复执行"
+                )
+            duplicate_of = str(getattr(ticket, "duplicate_of", "") or "").strip()
+            if duplicate_of:
+                lines.append(
+                    f"- 本条与活跃票据 {duplicate_of[:8]} 内容完全相同（疑似重复）"
+                    "——重复就引用进度回一句，有新意图再正常处理"
+                )
+        return lines
 
     def inject_active_jobs_prompt_context(self, messages: list[dict]) -> None:
         context = self.build_active_jobs_prompt_context()

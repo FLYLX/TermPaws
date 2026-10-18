@@ -7,7 +7,7 @@ import re
 import sys
 import threading
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.plugins.robot.contracts import RobotReplyTarget
@@ -1385,6 +1385,51 @@ class RobotMCPServer:
                 "一句一个气泡才是正常形态——下次这种内容用 messages 数组按句拆开发。"
             )
         return ""
+
+    def _send_ledger_note(self, robot_id: str, target: Any) -> str:
+        """发送成功后回显本会话的近期已发账本（只给事实，不做判断）。
+
+        重复汇报的根源是模型在"发送"这一刻看不到自己几分钟前发过什么
+        （轮次开头的提示早被几十次工具调用冲淡）。把账本钉在发送结果里，
+        是否重复由模型当场自己判断。
+        """
+        try:
+            from app.plugins.robot.conversation_memory import (
+                conversation_key_from_reply_target,
+                robot_conversation_memory,
+            )
+
+            key = conversation_key_from_reply_target(target)
+            if not key:
+                return ""
+            recent = robot_conversation_memory.read_recent(robot_id, key, lines=60)
+            if not recent:
+                return ""
+            now = datetime.now(timezone.utc)
+            entries: list[str] = []
+            for line in recent.splitlines():
+                if not line.startswith("[") or "] assistant:" not in line:
+                    continue
+                ts_text, _, body = line[1:].partition("] assistant:")
+                try:
+                    sent_at = datetime.fromisoformat(ts_text.strip())
+                except ValueError:
+                    continue
+                age = (now - sent_at).total_seconds()
+                if age < 10 or age > 7200:
+                    continue
+                preview = body.strip()[:40]
+                if preview:
+                    entries.append(f"{int(age // 60)} 分钟前「{preview}」")
+            if not entries:
+                return ""
+            return (
+                "[账本] 本会话你近期已发出：" + "；".join(entries[-4:])
+                + "。若刚发的与其中某条是同一结论，之后别再重复汇报；"
+                "用户追问进度时引用账本条目的时间即可。"
+            )
+        except Exception:
+            return ""
 
     def _offroute_send_note(self, args: dict, target: Any) -> str:
         """发送目标与本轮来源/欠账清单对不上时的提醒（只提示，不拦截）。
@@ -3090,6 +3135,9 @@ class RobotMCPServer:
                 offroute_note = self._offroute_send_note(args, explicit_target)
                 if offroute_note:
                     result_text += f"\n{offroute_note}"
+                ledger_note = self._send_ledger_note(robot_id, explicit_target)
+                if ledger_note:
+                    result_text += f"\n{ledger_note}"
                 form_note = self._bubble_form_feedback(messages)
                 if form_note:
                     result_text += f"\n{form_note}"
@@ -3157,13 +3205,17 @@ class RobotMCPServer:
                     target=context_target,
                     sent_messages=sent_messages,
                 )
+                _ctx_text = (
+                    f"Message sent to QQ {context_target.target_type} "
+                    f"{_label} from chat context."
+                )
+                _ctx_ledger = self._send_ledger_note(robot_id, context_target)
+                if _ctx_ledger:
+                    _ctx_text += f"\n{_ctx_ledger}"
                 return [
                     {
                         "type": "text",
-                        "text": (
-                            f"Message sent to QQ {context_target.target_type} "
-                            f"{_label} from chat context."
-                        ),
+                        "text": _ctx_text,
                     },
                     self._qq_delivery_metadata(context_target, _label, sent_messages),
                 ]

@@ -423,6 +423,19 @@ class RobotAgentIntegration:
             # 渐进披露的一级：一行花名册让 agent 每轮都知道“我在哪些群/
             # 有哪些好友”，细节由 list_contacts 按需展开。
             reply_context_summary += f"\n- my conversations (sendable): {roster}"
+        # 表情包库存一行入卡：库存就这么点，不用专门调工具去发现。
+        try:
+            from app.plugins.robot.stickers import list_tags
+
+            sticker_tags = list_tags()
+        except Exception:
+            sticker_tags = {}
+        if sticker_tags:
+            tags_line = "、".join(f"{tag}×{count}" for tag, count in sticker_tags.items())
+            reply_context_summary += (
+                f"\n- stickers available: {tags_line}"
+                "（send_message 带 sticker_tag=标签名 随机发一张；不带就不发图）"
+            )
         agent_context.robot_reply_context_summary = reply_context_summary
         agent_context.robot_mcp_server_transient = False
         return True

@@ -4648,7 +4648,7 @@ def test_record_and_send_job_error_reaches_qq_before_state_clear(
     assert controller.sleeping is True
     pending_texts = service._pending_chat_message_texts(robot.id, "group:g1")
     assert pending_texts and "超时" in pending_texts[0]
-    assert "上一轮处理失败" in pending_texts[0]
+    assert "上一轮被守卫终止" in pending_texts[0]
 
 
 def test_think_blocks_are_stripped_from_visible_text() -> None:

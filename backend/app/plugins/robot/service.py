@@ -1459,6 +1459,41 @@ class RobotService:
         )
         is_corrective = job.route_key == "dispatch_error_corrective"
         if not is_corrective:
+            # 轮次已经给用户发过内容时，守卫停机只是"附加部分没做完"
+            #（比如安慰的话已送达、表情没发到）——别再派生纠正轮把内部
+            # 失败演给用户看。
+            already_delivered = False
+            if job.reply_ticket_id:
+                try:
+                    from app.plugins.robot.mcp.server import RobotMCPServer
+
+                    already_delivered = bool(
+                        RobotMCPServer.get_delivered_targets(
+                            f"ticket:{job.reply_ticket_id}"
+                        )
+                    )
+                except Exception:
+                    already_delivered = False
+            if already_delivered:
+                record_robot_event(
+                    str(job.robot_id),
+                    direction="backend_worker",
+                    event="dispatch_error_suppressed_after_delivery",
+                    status="ignored",
+                    message=message,
+                    payload={
+                        "item_id": str(job.item_id),
+                        "route_key": job.route_key,
+                        "conversation": job.conversation_key,
+                    },
+                )
+                self._clear_reply_context_window_for_key(
+                    job.robot_id,
+                    job.conversation_key,
+                    reason="dispatch_error",
+                    expected_generation=job.conversation_generation or None,
+                )
+                return
             try:
                 with Session(engine) as session:
                     robot = session.get(Robot, job.robot_id)
@@ -1469,10 +1504,11 @@ class RobotService:
                         item_id=job.item_id,
                         route_key="dispatch_error_corrective",
                         message_text=(
-                            "[系统] 上一轮处理失败，详情："
-                            f"{str(message)[:300]}。"
-                            "如果用戶在等结果，用你自己的话如实告知这事没办成"
-                            "（别说内部术语）；如果用户在忙别的事没等这个，静默即可"
+                            "[系统] 你上一轮被守卫终止了。"
+                            f"内部诊断（禁止原句转发给用户）：{str(message)[:300]}。"
+                            f"用户刚才的请求是：「{str(job.message_text or job.message)[:100]}」。"
+                            "直接用你自己的话补救：能立刻完成就现在做完并回复；"
+                            "做不了就如实说没办成。如果用户没在等这个结果，静默即可"
                             "（输出 [no_qq_reply]）。"
                         ),
                         sender_key=job.sender_key,

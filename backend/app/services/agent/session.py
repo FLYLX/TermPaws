@@ -1369,7 +1369,15 @@ class AgentSession:
             # 对用户可见的终止汇报意味着任务真的结束了：计划一并取消，
             # 防止 resume sweep 复活已宣告失败的任务。
             reply_ticket_manager.cancel_plan(ticket_id, explanation="stopped")
-            delivered = reply_ticket_manager.deliver(ticket_id, report)
+            deliver_report = report
+            if ticket.source_type == "qq":
+                # QQ 侧只给类别不给原始异常（litellm 类名/报文位置等内部
+                # 细节对群友毫无意义）；完整原因在日志和票据上。
+                friendly = str(report or "").strip()
+                if "：" in friendly:
+                    friendly = friendly.split("：", 1)[0]
+                deliver_report = f"{friendly}，稍后再试一次应该就好" if friendly else "任务中断了，稍后再试"
+            delivered = reply_ticket_manager.deliver(ticket_id, deliver_report)
             if delivered and ticket.source_type == "qq":
                 self.emit_output(
                     f"已回复 QQ：{report.strip()}",

@@ -27,6 +27,7 @@ class CapturedSend:
     group_id: int | None
     user_id: int | None
     message: str
+    has_image: bool = False
 
 
 class OnebotSim:
@@ -108,15 +109,22 @@ class OnebotSim:
                 params = data.get("params") or {}
                 if str(action).startswith("send"):
                     msg = params.get("message")
+                    has_image = False
                     if isinstance(msg, list):
+                        has_image = any(
+                            isinstance(s, dict) and s.get("type") == "image"
+                            for s in msg
+                        )
                         msg = "".join(s.get("data", {}).get("text", "")
-                                      for s in msg if s.get("type") == "text")
+                                      for s in msg
+                                      if isinstance(s, dict) and s.get("type") == "text")
                     rec = CapturedSend(
                         ts=time.strftime("%H:%M:%S"),
                         action=str(action),
                         group_id=params.get("group_id"),
                         user_id=params.get("user_id"),
                         message=str(msg)[:400],
+                        has_image=has_image,
                     )
                     self.sends.append(rec)
                     if self.on_send:

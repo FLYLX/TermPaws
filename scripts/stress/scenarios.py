@@ -121,4 +121,24 @@ SCENARIOS = {
         ],
         "forbid_global": [],
     },
+    # 表情包专项：有标签带图、无标签纯文字、连发、跨会话各自带图
+    "sticker_play": {
+        "steps": [
+            (0, OnebotSim.private(3001, "戊", "paws 发个开心的表情包给我")),
+            (40, OnebotSim.group(1001, 2001, "甲", "paws 发个难过的表情包看看")),
+            (80, OnebotSim.private(3001, "戊", "paws 发个生气的表情包")),
+            (120, OnebotSim.group(1002, 2003, "丙", "paws 来个开心的表情")),
+            (160, OnebotSim.private(3001, "戊", "paws 开心")),
+            (166, OnebotSim.private(3001, "戊", "paws 难过")),
+        ],
+        "web": [],
+        "wait_s": 900,
+        "expect_files": [],
+        "expect_routes": [
+            {"target": ("private", 3001), "must": [], "forbid": [], "must_image": True},
+            {"target": ("group", 1001), "must": [], "forbid": [], "must_image": True},
+            {"target": ("group", 1002), "must": [], "forbid": [], "must_image": True},
+        ],
+        "forbid_global": [],
+    },
 }

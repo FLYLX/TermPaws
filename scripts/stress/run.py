@@ -38,6 +38,10 @@ def _check_routes(scenario: dict, sends) -> list[str]:
             for kw in rule.get("forbid", []):
                 if kw in s.message:
                     failures.append(f"{ttype}:{tid} 的回复里出现禁词「{kw}」: {s.message[:80]}")
+        if rule.get("must_image") is True and not any(s.has_image for s in hits):
+            failures.append(f"{ttype}:{tid} 应带图片但没有一条带图")
+        if rule.get("must_image") is False and any(s.has_image for s in hits):
+            failures.append(f"{ttype}:{tid} 不应带图但带了")
     forbidden = scenario.get("forbid_global", [])
     for s in sends:
         for kw in forbidden:

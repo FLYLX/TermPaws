@@ -204,9 +204,28 @@ class RobotMCPServer:
                             "one status line per target."
                         ),
                     },
+                    "sticker_tag": {
+                        "type": "string",
+                        "description": (
+                            "可选：表情包标签。给了就从库里随机抽一张该标签的"
+                            "表情包随消息发出（一次最多一张，挂在第一条气泡上）。"
+                            "留空不发图。库里有哪些标签用 list_stickers 查；"
+                            "标签没图时会照发文字并在结果里告知。"
+                        ),
+                    },
                 },
             },
             handler=self._send_message,
+            skip_memory=True,
+        )
+        self.register_tool(
+            name="list_stickers",
+            description=(
+                "列出表情包库里现有的标签和每个标签的图片数。想发图先用它确认"
+                "标签存在；库里还没有的表情只能靠以后收到的图慢慢攒。"
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=self._list_stickers,
             skip_memory=True,
         )
         self.register_tool(
@@ -1489,8 +1508,11 @@ class RobotMCPServer:
         robot_id: str,
         target: RobotReplyTarget,
         messages: list[str],
+        sticker_tag: str = "",
     ) -> list[str]:
         sent_messages: list[str] = []
+        sticker_tag = str(sticker_tag or "").strip()
+        sticker_used = False
         now = datetime.now()
         with self._recent_sends_lock:
             for key, ts in list(self._recent_sends.items()):
@@ -1519,7 +1541,11 @@ class RobotMCPServer:
                         normalized[:40],
                     )
                     continue
-            bridge_client.send_message(robot_id, target, message)
+            # 表情包只挂在第一条气泡上：一次发送事件最多一张图
+            tag_for_this = sticker_tag if not sticker_used else ""
+            bridge_client.send_message(robot_id, target, message, sticker_tag=tag_for_this)
+            if tag_for_this:
+                sticker_used = True
             # 发送成功才登记——失败的消息不算发过，允许重试。
             with self._recent_sends_lock:
                 self._recent_sends[dup_key] = datetime.now()
@@ -2839,10 +2865,35 @@ class RobotMCPServer:
             "skip_memory": skip_memory,
         }
 
+    def _list_stickers(self, args: dict) -> list[dict[str, str]]:
+        try:
+            from app.plugins.robot.stickers import list_tags
+
+            tags = list_tags()
+        except Exception as exc:
+            return [{"type": "text", "text": f"Error: {exc}"}]
+        if not tags:
+            return [{"type": "text", "text": "表情包库是空的，还没收到过可以收的图。"}]
+        listing = "、".join(f"{tag}×{count}" for tag, count in tags.items())
+        return [{"type": "text", "text": f"现有表情包标签：{listing}"}]
+
     def _send_message(self, args: dict) -> list[dict[str, str]]:
         raw_messages = self._raw_message_texts(args)
         messages = self._sanitize_outgoing_messages(raw_messages)
         text = "\n".join(messages).strip()
+        sticker_tag = str(args.get("sticker_tag") or "").strip()
+        sticker_missing_note = ""
+        if sticker_tag:
+            try:
+                from app.plugins.robot.stickers import random_sticker
+
+                if random_sticker(sticker_tag) is None:
+                    sticker_missing_note = (
+                        f"注意：库里没有标签「{sticker_tag}」的表情包，本次只发了文字。"
+                        "现有标签用 list_stickers 查。"
+                    )
+            except Exception:
+                pass
         raw_text = "\n".join(str(value or "") for value in raw_messages).strip()
         if not messages:
             if any(is_robot_internal_trace_text(str(value or "")) for value in raw_messages):
@@ -3102,6 +3153,7 @@ class RobotMCPServer:
                     robot_id,
                     explicit_target,
                     messages,
+                    sticker_tag=sticker_tag,
                 )
                 self._remember_sent_messages(robot_id, explicit_target, sent_messages, args=args)
                 _sent_ticket_id = str(args.get("_reply_ticket_id") or "").strip()
@@ -3138,6 +3190,8 @@ class RobotMCPServer:
                 ledger_note = self._send_ledger_note(robot_id, explicit_target)
                 if ledger_note:
                     result_text += f"\n{ledger_note}"
+                if sticker_missing_note:
+                    result_text += f"\n{sticker_missing_note}"
                 form_note = self._bubble_form_feedback(messages)
                 if form_note:
                     result_text += f"\n{form_note}"
@@ -3179,6 +3233,7 @@ class RobotMCPServer:
                     robot_id,
                     context_target,
                     messages,
+                    sticker_tag=sticker_tag,
                 )
                 self._remember_sent_messages(robot_id, context_target, sent_messages, args=args)
                 _sent_ticket_id = str(args.get("_reply_ticket_id") or "").strip()
@@ -3212,6 +3267,8 @@ class RobotMCPServer:
                 _ctx_ledger = self._send_ledger_note(robot_id, context_target)
                 if _ctx_ledger:
                     _ctx_text += f"\n{_ctx_ledger}"
+                if sticker_missing_note:
+                    _ctx_text += f"\n{sticker_missing_note}"
                 return [
                     {
                         "type": "text",

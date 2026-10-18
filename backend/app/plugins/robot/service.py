@@ -1691,6 +1691,17 @@ class RobotService:
                 )
             message_text = self._agent_visible_message_text(message_text)
             inbound_image_urls = self._cache_inbound_images(message.text)
+            if inbound_image_urls and self._image_recognition_enabled(robot):
+                # 表情包自动收库：后台打标，不阻塞消息链路
+                try:
+                    from .sticker_tagger import maybe_tag_inbound_images
+
+                    maybe_tag_inbound_images(
+                        str(resolved_binding.item.id),
+                        [url.rsplit("/", 1)[-1] for url in inbound_image_urls],
+                    )
+                except Exception:
+                    logger.debug("[RobotService] sticker tagging kick failed", exc_info=True)
             if not message_text and inbound_image_urls:
                 message_text = "[图片]"
             if not message_text:

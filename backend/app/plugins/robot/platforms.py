@@ -1708,6 +1708,7 @@ async def _send_onebot_text_with_explicit_target(
     bot: Any,
     target: RobotReplyTarget,
     text: str,
+    image_b64: str = "",
 ) -> bool:
     adapter_name = str(bot.adapter.get_name()).strip().lower()
     if adapter_name != "onebot v11":
@@ -1727,26 +1728,42 @@ async def _send_onebot_text_with_explicit_target(
         await bot.call_api(
             "send_group_msg",
             group_id=target_id,
-            message=_onebot_group_message_payload(text),
+            message=_onebot_message_segments(text, image_b64),
         )
         return True
     if target_type in {"private", "c2c", "friend", "direct", "direct_message"}:
         await bot.call_api(
             "send_private_msg",
             user_id=target_id,
-            message=text,
+            message=_onebot_message_segments(text, image_b64) if image_b64 else text,
         )
         return True
     return False
+
+
+def _onebot_message_segments(text: str, image_b64: str = "") -> list[dict[str, Any]] | str:
+    """文本 + 可选图片（base64）组装 OneBot 消息段。无图时保持原逻辑。"""
+    if not image_b64:
+        return _onebot_group_message_payload(text)
+    segments: list[dict[str, Any]] = []
+    text_payload = _onebot_group_message_payload(text)
+    if isinstance(text_payload, list):
+        segments.extend(text_payload)
+    elif text_payload.strip():
+        segments.append({"type": "text", "data": {"text": text_payload}})
+    segments.append({"type": "image", "data": {"file": f"base64://{image_b64}"}})
+    return segments
 
 
 async def send_text_with_bot(
     bot: Any,
     target: RobotReplyTarget,
     text: str,
+    *,
+    image_b64: str = "",
 ) -> None:
     normalized_text = (text or "").strip()
-    if not normalized_text:
+    if not normalized_text and not image_b64:
         return
 
     target_data = target.metadata.get("target")
@@ -1767,7 +1784,7 @@ async def send_text_with_bot(
             else None
         )
         if onebot_group_id is not None:
-            group_payload = _onebot_group_message_payload(normalized_text)
+            group_payload = _onebot_message_segments(normalized_text, image_b64)
             if not isinstance(group_payload, str):
                 await bot.call_api(
                     "send_group_msg",
@@ -1786,7 +1803,7 @@ async def send_text_with_bot(
         await UniMessage(normalized_text).send(target=uni_target, bot=bot)
         return
 
-    if await _send_onebot_text_with_explicit_target(bot, target, normalized_text):
+    if await _send_onebot_text_with_explicit_target(bot, target, normalized_text, image_b64):
         return
 
     raise ValueError("Unsupported reply target for current bot")

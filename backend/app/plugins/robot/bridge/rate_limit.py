@@ -65,9 +65,10 @@ async def send_text_with_rate_limit(
     text: str,
     *,
     robot_id: str | None = None,
+    image_b64: str = "",
 ) -> None:
     normalized_text = (text or "").strip()
-    if not normalized_text:
+    if not normalized_text and not image_b64:
         return
 
     key = _send_key(bot, target)
@@ -82,7 +83,7 @@ async def send_text_with_rate_limit(
         attempts = 1 + len(RATE_LIMIT_RETRY_DELAYS)
         for attempt in range(attempts):
             try:
-                await send_text_with_bot(bot, target, normalized_text)
+                await send_text_with_bot(bot, target, normalized_text, image_b64=image_b64)
                 logger.info(
                     "[Bridge] Platform send success target=%s:%s text=%s",
                     target.target_type,

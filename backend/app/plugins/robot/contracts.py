@@ -42,6 +42,7 @@ class RobotBridgeSendRequest(BaseModel):
     robot_id: uuid.UUID
     target: RobotReplyTarget
     text: str
+    sticker_tag: str = ""
 
 
 class RobotBridgeReloadResponse(BaseModel):

@@ -1556,6 +1556,22 @@ def init_embedded_bridge() -> APIRouter | None:
                     status_code=404, detail="Robot is not loaded in bridge"
                 )
 
+            image_b64 = ""
+            sticker_note = ""
+            sticker_tag = str(getattr(body, "sticker_tag", "") or "").strip()
+            if sticker_tag:
+                import base64 as _b64
+
+                from app.plugins.robot.stickers import random_sticker
+
+                sticker_path = random_sticker(sticker_tag)
+                if sticker_path is not None:
+                    try:
+                        image_b64 = _b64.b64encode(sticker_path.read_bytes()).decode()
+                        sticker_note = sticker_path.parent.name
+                    except Exception:
+                        image_b64 = ""
+
             record_robot_event(
                 robot_id,
                 direction="bridge_to_platform",
@@ -1564,6 +1580,7 @@ def init_embedded_bridge() -> APIRouter | None:
                 payload={
                     "target_type": body.target.target_type,
                     "target_id": body.target.target_id,
+                    "sticker_tag": sticker_note or sticker_tag,
                 },
             )
             await send_text_with_rate_limit(
@@ -1571,8 +1588,9 @@ def init_embedded_bridge() -> APIRouter | None:
                 body.target,
                 body.text,
                 robot_id=robot_id,
+                image_b64=image_b64,
             )
-            return {"success": True}
+            return {"success": True, "sticker_tag_sent": sticker_note}
 
         @_bridge_router.post("/internal/send")
         async def internal_send(

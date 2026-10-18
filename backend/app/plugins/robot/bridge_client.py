@@ -124,10 +124,18 @@ class RobotBridgeClient:
         data = response.json()
         return data if isinstance(data, dict) else {"success": False, "data": None, "error": "bad bridge response"}
 
-    def send_message(self, robot_id: uuid.UUID | str, target: RobotReplyTarget, text: str) -> None:
+    def send_message(
+        self,
+        robot_id: uuid.UUID | str,
+        target: RobotReplyTarget,
+        text: str,
+        *,
+        sticker_tag: str = "",
+    ) -> dict[str, Any]:
         robot_id_str = str(robot_id)
         original_text = normalize_robot_message_text(text)
         text = compact_robot_visible_message_text(sanitize_robot_visible_text(original_text))
+        sticker_tag = str(sticker_tag or "").strip()
         if not text or is_robot_internal_trace_text(text):
             record_robot_event(
                 robot_id_str,
@@ -157,7 +165,7 @@ class RobotBridgeClient:
 
         chunks = split_robot_message_for_target(target, text)
         if not chunks:
-            return
+            return {"success": False, "error": "empty"}
 
         record_robot_event(
             robot_id_str,
@@ -168,16 +176,19 @@ class RobotBridgeClient:
                 "target_type": target.target_type,
                 "target_id": target.target_id,
                 "chunk_count": len(chunks),
+                "sticker_tag": sticker_tag,
             },
         )
         chunk_index = 0
         chunk_text = ""
+        first_result: dict[str, Any] = {}
         try:
             for chunk_index, chunk_text in enumerate(chunks, start=1):
                 payload = RobotBridgeSendRequest(
                     robot_id=robot_id,
                     target=target,
                     text=chunk_text,
+                    sticker_tag=sticker_tag if chunk_index == 1 else "",
                 )
                 if len(chunks) > 1:
                     record_robot_event(
@@ -192,12 +203,17 @@ class RobotBridgeClient:
                             "chunk_count": len(chunks),
                         },
                     )
-                self._request(
+                response = self._request(
                     "POST",
                     "/internal/send",
                     timeout=10.0,
                     content=payload.model_dump_json(),
                 )
+                if chunk_index == 1:
+                    try:
+                        first_result = response.json()
+                    except ValueError:
+                        first_result = {}
         except Exception as exc:
             record_robot_event(
                 robot_id_str,
@@ -214,6 +230,7 @@ class RobotBridgeClient:
                 },
             )
             raise
+        return first_result or {"success": True}
 
     def notify_reload(self) -> tuple[bool, str]:
         if not settings.ROBOT_BRIDGE_AUTO_RELOAD:

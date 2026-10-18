@@ -1,11 +1,11 @@
 [project]
 name = "termpaws"
-version = "0.9.29"
+version = "0.9.30"
 description = "TermPaws all-in-one: backend + frontend (install this to get everything)"
 requires-python = ">=3.10,<4.0"
 dependencies = [
-    "termpaws-backend==0.9.29",
-    "termpaws-frontend==0.9.29",
+    "termpaws-backend==0.9.30",
+    "termpaws-frontend==0.9.30",
 ]
 
 [build-system]

@@ -80,3 +80,40 @@ def list_tags() -> dict[str, int]:
 
 def sticker_count() -> int:
     return sum(list_tags().values())
+
+
+def list_stickers() -> list[dict]:
+    """前端表情库面板用：标签 + 文件名列表。"""
+    result: list[dict] = []
+    for directory in sorted(_store_dir().iterdir()):
+        if directory.is_dir():
+            files = sorted(p.name for p in directory.iterdir() if p.is_file())
+            if files:
+                result.append({"tag": directory.name, "files": files})
+    return result
+
+
+def sticker_file_path(tag: str, name: str) -> Path | None:
+    """标签+文件名 -> 本地文件；非法成分（穿越/隐藏）返回 None。"""
+    tag_dir_name = normalize_tag(tag)
+    clean_name = Path(str(name or "")).name
+    if not tag_dir_name or not clean_name or clean_name.startswith("."):
+        return None
+    path = _tag_dir(tag_dir_name) / clean_name
+    return path if path.exists() and path.is_file() else None
+
+
+def delete_sticker(tag: str, name: str) -> bool:
+    """删除一张表情包；标签目录空了顺带删目录。"""
+    path = sticker_file_path(tag, name)
+    if path is None:
+        return False
+    path.unlink()
+    parent = path.parent
+    try:
+        if parent.is_dir() and not any(parent.iterdir()):
+            parent.rmdir()
+    except OSError:
+        pass
+    logger.info("[Stickers] deleted %s/%s", parent.name, name)
+    return True

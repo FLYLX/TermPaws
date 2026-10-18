@@ -333,6 +333,36 @@ def get_robot_image(name: str) -> FileResponse:
     return FileResponse(path)
 
 
+@router.get("/stickers")
+def list_robot_stickers(current_user: CurrentUser) -> dict:
+    """表情包库清单（前端表情库面板）。"""
+    del current_user
+    from .stickers import list_stickers
+
+    return {"tags": list_stickers()}
+
+
+@router.get("/stickers/file/{tag}/{name}")
+def get_robot_sticker_file(tag: str, name: str) -> FileResponse:
+    """表情包文件。uuid 文件名不可猜测，无需鉴权（同下载票据模式）。"""
+    from .stickers import sticker_file_path
+
+    path = sticker_file_path(tag, name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Sticker not found")
+    return FileResponse(path)
+
+
+@router.delete("/stickers/{tag}/{name}")
+def delete_robot_sticker(tag: str, name: str, current_user: CurrentUser) -> dict:
+    del current_user
+    from .stickers import delete_sticker
+
+    if not delete_sticker(tag, name):
+        raise HTTPException(status_code=404, detail="Sticker not found")
+    return {"message": "deleted"}
+
+
 @router.get("/bridge/health")
 def get_bridge_health(current_user: CurrentUser) -> dict:
     del current_user

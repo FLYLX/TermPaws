@@ -69,6 +69,7 @@ import useCustomToast from "@/hooks/useCustomToast"
 import {
   createRobotBinding,
   deleteRobotBinding,
+  deleteRobotSticker,
   getRobotBindingsQueryKey,
   getRobotConnectionQueryKey,
   getRobotConnectionStatus,
@@ -78,10 +79,13 @@ import {
   getRobotPlatformsQueryKey,
   getRobotQueryKey,
   getRobotsQueryKey,
+  getRobotStickersQueryKey,
   importRobotConversationMemory,
   listRobotBindings,
   listRobotConversationMemory,
   listRobotPlatforms,
+  listRobotStickers,
+  robotStickerFileUrl,
   type RobotBindingRecord,
   type RobotConnectionStatus,
   type RobotDebugEvent,
@@ -553,7 +557,15 @@ function useRobotDetailUiCopy() {
           tabBindings: "绑定",
           tabDebug: "调试",
           tabMemory: "记忆",
+          tabStickers: "表情库",
           tabSettings: "设置",
+          stickerTitle: "表情库",
+          stickerDescription:
+            "机器人收到的表情包会自动识别情绪标签收进这里；回复时可以按标签随机带图。",
+          stickerEmpty: "还没有表情包，群里多发点图给它攒",
+          stickerDeleteConfirm: "删除这张表情？",
+          stickerDeleted: "表情已删除",
+          stickerDeleteFailed: "删除表情失败",
           bindingDescription: "管理这个机器人 Server 可以收发消息的终端。",
           copied: "已复制",
           copyLabel: (label: string) => `复制${label}`,
@@ -656,7 +668,15 @@ function useRobotDetailUiCopy() {
           tabBindings: "Bindings",
           tabDebug: "Debug",
           tabMemory: "Memory",
+          tabStickers: "Stickers",
           tabSettings: "Settings",
+          stickerTitle: "Sticker Library",
+          stickerDescription:
+            "Memes the bot receives are auto-tagged by emotion and stored here; replies can attach a random one by tag.",
+          stickerEmpty: "No stickers yet - send the bot some memes to collect",
+          stickerDeleteConfirm: "Delete this sticker?",
+          stickerDeleted: "Sticker deleted",
+          stickerDeleteFailed: "Failed to delete sticker",
           bindingDescription:
             "Manage the terminals this robot server can send messages to and receive output from.",
           copied: "Copied",
@@ -1792,6 +1812,102 @@ function formatRobotMemorySize(sizeBytes: number) {
   return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function StickerLibraryPanel({ robotId }: { robotId: string }) {
+  const copy = useRobotDetailUiCopy()
+  const queryClient = useQueryClient()
+  const { showErrorToast, showSuccessToast } = useCustomToast()
+  const [deletingKey, setDeletingKey] = useState("")
+
+  const stickersQuery = useQuery({
+    queryKey: getRobotStickersQueryKey(robotId),
+    queryFn: () => listRobotStickers(),
+    refetchInterval: 15000,
+  })
+
+  const groups = stickersQuery.data?.tags ?? []
+  const totalCount = groups.reduce((sum, group) => sum + group.files.length, 0)
+
+  const handleDelete = async (tag: string, name: string) => {
+    const key = `${tag}/${name}`
+    if (!window.confirm(copy.stickerDeleteConfirm)) {
+      return
+    }
+    setDeletingKey(key)
+    try {
+      await deleteRobotSticker(tag, name)
+      showSuccessToast(copy.stickerDeleted)
+      await queryClient.invalidateQueries({
+        queryKey: getRobotStickersQueryKey(robotId),
+      })
+    } catch {
+      showErrorToast(copy.stickerDeleteFailed)
+    } finally {
+      setDeletingKey("")
+    }
+  }
+
+  return (
+    <Card className="rounded-3xl border bg-card shadow-sm">
+      <CardHeader className="pb-3">
+        <CardTitle>{copy.stickerTitle}</CardTitle>
+        <CardDescription>{copy.stickerDescription}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {totalCount === 0 ? (
+          <div className="rounded-2xl border border-dashed bg-muted/10 px-6 py-10 text-center text-sm text-muted-foreground">
+            {copy.stickerEmpty}
+          </div>
+        ) : (
+          <div className="grid gap-5">
+            {groups.map((group) => (
+              <div key={group.tag} className="grid gap-2">
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary" className="rounded-full">
+                    {group.tag}
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">
+                    {group.files.length}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
+                  {group.files.map((name) => {
+                    const key = `${group.tag}/${name}`
+                    return (
+                      <div
+                        key={key}
+                        className="group relative aspect-square overflow-hidden rounded-xl border bg-muted/20"
+                      >
+                        <img
+                          src={robotStickerFileUrl(group.tag, name)}
+                          alt={group.tag}
+                          loading="lazy"
+                          className="size-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(group.tag, name)}
+                          disabled={deletingKey === key}
+                          className="absolute right-1 top-1 rounded-full bg-background/80 p-1 opacity-0 transition-opacity group-hover:opacity-100"
+                        >
+                          {deletingKey === key ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="size-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 function RobotConversationMemoryPanel({ robotId }: { robotId: string }) {
   const copy = useRobotDetailUiCopy()
   const queryClient = useQueryClient()
@@ -2634,11 +2750,12 @@ export function RobotDetail({ robotId }: { robotId: string }) {
       </section>
 
       <Tabs value={activeTab} onValueChange={activateTab} className="gap-4">
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl p-1 sm:grid-cols-5 lg:w-fit">
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl p-1 sm:grid-cols-6 lg:w-fit">
           <TabsTrigger value="connection">{copy.tabConnection}</TabsTrigger>
           <TabsTrigger value="bindings">{copy.tabBindings}</TabsTrigger>
           <TabsTrigger value="debug">{copy.tabDebug}</TabsTrigger>
           <TabsTrigger value="memory">{copy.tabMemory}</TabsTrigger>
+          <TabsTrigger value="stickers">{copy.tabStickers}</TabsTrigger>
           <TabsTrigger value="settings">{copy.tabSettings}</TabsTrigger>
         </TabsList>
 
@@ -2697,6 +2814,12 @@ export function RobotDetail({ robotId }: { robotId: string }) {
         <TabsContent value="memory" className="mt-0">
           {hasVisitedTab("memory") ? (
             <RobotConversationMemoryPanel robotId={robotId} />
+          ) : null}
+        </TabsContent>
+
+        <TabsContent value="stickers" className="mt-0">
+          {hasVisitedTab("stickers") ? (
+            <StickerLibraryPanel robotId={robotId} />
           ) : null}
         </TabsContent>
 

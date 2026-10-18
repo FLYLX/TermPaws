@@ -196,6 +196,34 @@ export async function listRobots() {
   return apiRequest<RobotListResponse>("/api/v1/robots/")
 }
 
+export type RobotStickerTag = {
+  tag: string
+  files: string[]
+}
+
+export type RobotStickersResponse = {
+  tags: RobotStickerTag[]
+}
+
+export function getRobotStickersQueryKey(robotId: string) {
+  return ["robot-stickers", robotId] as const
+}
+
+export function robotStickerFileUrl(tag: string, name: string) {
+  return `${OpenAPI.BASE}/api/v1/robots/stickers/file/${encodeURIComponent(tag)}/${encodeURIComponent(name)}`
+}
+
+export async function listRobotStickers() {
+  return apiRequest<RobotStickersResponse>("/api/v1/robots/stickers")
+}
+
+export async function deleteRobotSticker(tag: string, name: string) {
+  return apiRequest<{ message: string }>(
+    `/api/v1/robots/stickers/${encodeURIComponent(tag)}/${encodeURIComponent(name)}`,
+    { method: "DELETE" },
+  )
+}
+
 export async function readRobot(robotId: string) {
   return apiRequest<RobotRecord>(`/api/v1/robots/${robotId}`)
 }

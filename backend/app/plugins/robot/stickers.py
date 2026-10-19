@@ -37,9 +37,21 @@ def _tag_dir(tag: str) -> Path:
 
 
 def save_sticker(tag: str, payload: bytes, ext: str) -> Path | None:
-    """存一张表情包，返回路径。tag 非法或内容为空返回 None。"""
+    """存一张表情包，返回路径。tag 非法或内容为空返回 None。
+
+    内容去重：同一张图（字节级相同）在库里已有就跳过，不再重复入库
+    （同一张梗图被反复转发/重发很常见）。
+    """
     tag = normalize_tag(tag)
     if not tag or not payload:
+        return None
+    existing = _find_duplicate(payload)
+    if existing is not None:
+        logger.info(
+            "[Stickers] duplicate skipped: tag=%s already at %s",
+            tag,
+            existing.parent.name,
+        )
         return None
     ext = ext if ext.startswith(".") else f".{ext}"
     directory = _tag_dir(tag)
@@ -48,6 +60,25 @@ def save_sticker(tag: str, payload: bytes, ext: str) -> Path | None:
     path.write_bytes(payload)
     logger.info("[Stickers] saved tag=%s file=%s (%d bytes)", tag, path.name, len(payload))
     return path
+
+
+def _find_duplicate(payload: bytes) -> Path | None:
+    """全库字节级查重，返回已有文件路径。库存量级小，逐文件比对即可。"""
+    size = len(payload)
+    for directory in _store_dir().iterdir():
+        if not directory.is_dir():
+            continue
+        for path in directory.iterdir():
+            try:
+                if (
+                    path.is_file()
+                    and path.stat().st_size == size
+                    and path.read_bytes() == payload
+                ):
+                    return path
+            except OSError:
+                continue
+    return None
 
 
 def random_sticker(tag: str) -> Path | None:

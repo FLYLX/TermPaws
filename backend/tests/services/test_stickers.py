@@ -30,10 +30,14 @@ def test_sticker_store_roundtrip(tmp_path, monkeypatch) -> None:
     # 随机取能拿到
     picked = random_sticker("开心")
     assert picked is not None and picked.read_bytes() == payload
-    assert random_sticker("开心") == picked or True  # 只有一张时恒定
+
+    # 重复内容不再入库（同标签、跨标签都挡）
+    assert save_sticker("开心", payload, ".jpg") is None
+    assert save_sticker("难过", payload, ".jpg") is None
+    assert list_tags() == {"开心": 1}
 
     # 退化匹配：标签目录名包含查询串
-    save_sticker("开心死了", payload, ".jpg")
+    save_sticker("开心死了", payload + b"x", ".jpg")
     assert random_sticker("开心") is not None
 
     # 不存在返回 None

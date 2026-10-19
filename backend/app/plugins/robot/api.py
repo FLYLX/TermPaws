@@ -3,7 +3,7 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 from sqlmodel import col, select
@@ -361,6 +361,42 @@ def delete_robot_sticker(tag: str, name: str, current_user: CurrentUser) -> dict
     if not delete_sticker(tag, name):
         raise HTTPException(status_code=404, detail="Sticker not found")
     return {"message": "deleted"}
+
+
+@router.post("/stickers")
+async def upload_robot_sticker(
+    current_user: CurrentUser,
+    tag: str = Form(...),
+    file: UploadFile = File(...),
+) -> dict:
+    """上传一张表情包到指定标签。"""
+    del current_user
+    from .image_store import _EXT_BY_MIME
+    from .stickers import normalize_tag, save_sticker
+
+    normalized = normalize_tag(tag)
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Invalid tag")
+    payload = await file.read()
+    if not payload or len(payload) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Empty or oversized file")
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    ext = _EXT_BY_MIME.get(content_type)
+    if ext is None:
+        if payload[:3] == b"\xff\xd8\xff":
+            ext = ".jpg"
+        elif payload[:8] == b"\x89PNG\r\n\x1a\n":
+            ext = ".png"
+        elif payload[:6] in (b"GIF87a", b"GIF89a"):
+            ext = ".gif"
+        elif payload[:4] == b"RIFF" and payload[8:12] == b"WEBP":
+            ext = ".webp"
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported image format")
+    path = save_sticker(normalized, payload, ext)
+    if path is None:
+        raise HTTPException(status_code=400, detail="Failed to save sticker")
+    return {"tag": normalized, "name": path.name}
 
 
 @router.get("/bridge/health")

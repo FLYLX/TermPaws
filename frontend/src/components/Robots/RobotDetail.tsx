@@ -102,6 +102,7 @@ import {
   type RobotManualMessageTargetType,
   updateRobot,
   updateRobotBinding,
+  uploadRobotSticker,
 } from "./api"
 
 const ROBOT_DEBUG_EVENT_PAGE_SIZE = 10
@@ -566,6 +567,13 @@ function useRobotDetailUiCopy() {
           stickerDeleteConfirm: "删除这张表情？",
           stickerDeleted: "表情已删除",
           stickerDeleteFailed: "删除表情失败",
+          stickerUpload: "上传表情",
+          stickerUploadTag: "标签",
+          stickerUploadTagPlaceholder: "例如：开心",
+          stickerUploadPick: "选择图片",
+          stickerUploadSuccess: "表情已入库",
+          stickerUploadFailed: "上传失败",
+          stickerUploadTagRequired: "先填标签再选图",
           bindingDescription: "管理这个机器人 Server 可以收发消息的终端。",
           copied: "已复制",
           copyLabel: (label: string) => `复制${label}`,
@@ -677,6 +685,13 @@ function useRobotDetailUiCopy() {
           stickerDeleteConfirm: "Delete this sticker?",
           stickerDeleted: "Sticker deleted",
           stickerDeleteFailed: "Failed to delete sticker",
+          stickerUpload: "Upload",
+          stickerUploadTag: "Tag",
+          stickerUploadTagPlaceholder: "e.g. happy",
+          stickerUploadPick: "Pick image",
+          stickerUploadSuccess: "Sticker added",
+          stickerUploadFailed: "Upload failed",
+          stickerUploadTagRequired: "Set a tag before picking an image",
           bindingDescription:
             "Manage the terminals this robot server can send messages to and receive output from.",
           copied: "Copied",
@@ -1817,6 +1832,10 @@ function StickerLibraryPanel({ robotId }: { robotId: string }) {
   const queryClient = useQueryClient()
   const { showErrorToast, showSuccessToast } = useCustomToast()
   const [deletingKey, setDeletingKey] = useState("")
+  const [openTag, setOpenTag] = useState("")
+  const [uploadTag, setUploadTag] = useState("")
+  const [uploading, setUploading] = useState(false)
+  const uploadInputRef = useRef<HTMLInputElement | null>(null)
 
   const stickersQuery = useQuery({
     queryKey: getRobotStickersQueryKey(robotId),
@@ -1826,6 +1845,12 @@ function StickerLibraryPanel({ robotId }: { robotId: string }) {
 
   const groups = stickersQuery.data?.tags ?? []
   const totalCount = groups.reduce((sum, group) => sum + group.files.length, 0)
+  const activeGroup = groups.find((group) => group.tag === openTag)
+
+  const refresh = () =>
+    queryClient.invalidateQueries({
+      queryKey: getRobotStickersQueryKey(robotId),
+    })
 
   const handleDelete = async (tag: string, name: string) => {
     const key = `${tag}/${name}`
@@ -1836,9 +1861,7 @@ function StickerLibraryPanel({ robotId }: { robotId: string }) {
     try {
       await deleteRobotSticker(tag, name)
       showSuccessToast(copy.stickerDeleted)
-      await queryClient.invalidateQueries({
-        queryKey: getRobotStickersQueryKey(robotId),
-      })
+      await refresh()
     } catch {
       showErrorToast(copy.stickerDeleteFailed)
     } finally {
@@ -1846,11 +1869,65 @@ function StickerLibraryPanel({ robotId }: { robotId: string }) {
     }
   }
 
+  const handleUploadFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ""
+    if (!file) {
+      return
+    }
+    const tag = uploadTag.trim()
+    if (!tag) {
+      showErrorToast(copy.stickerUploadTagRequired)
+      return
+    }
+    setUploading(true)
+    try {
+      await uploadRobotSticker(tag, file)
+      showSuccessToast(copy.stickerUploadSuccess)
+      await refresh()
+      setOpenTag(tag)
+    } catch {
+      showErrorToast(copy.stickerUploadFailed)
+    } finally {
+      setUploading(false)
+    }
+  }
+
   return (
     <Card className="rounded-3xl border bg-card shadow-sm">
-      <CardHeader className="pb-3">
-        <CardTitle>{copy.stickerTitle}</CardTitle>
-        <CardDescription>{copy.stickerDescription}</CardDescription>
+      <CardHeader className="flex flex-col gap-3 pb-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <CardTitle>{copy.stickerTitle}</CardTitle>
+          <CardDescription>{copy.stickerDescription}</CardDescription>
+        </div>
+        <div className="flex items-center gap-2">
+          <Input
+            value={uploadTag}
+            onChange={(event) => setUploadTag(event.target.value)}
+            placeholder={copy.stickerUploadTagPlaceholder}
+            className="h-9 w-32"
+          />
+          <input
+            ref={uploadInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleUploadFile}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={uploading}
+            onClick={() => uploadInputRef.current?.click()}
+          >
+            {uploading ? (
+              <Loader2 className="mr-1 size-3.5 animate-spin" />
+            ) : (
+              <Upload className="mr-1 size-3.5" />
+            )}
+            {copy.stickerUpload}
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         {totalCount === 0 ? (
@@ -1858,52 +1935,64 @@ function StickerLibraryPanel({ robotId }: { robotId: string }) {
             {copy.stickerEmpty}
           </div>
         ) : (
-          <div className="grid gap-5">
+          <div className="flex flex-wrap gap-2">
             {groups.map((group) => (
-              <div key={group.tag} className="grid gap-2">
-                <div className="flex items-center gap-2">
-                  <Badge variant="secondary" className="rounded-full">
-                    {group.tag}
-                  </Badge>
-                  <span className="text-xs text-muted-foreground">
-                    {group.files.length}
-                  </span>
-                </div>
-                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
-                  {group.files.map((name) => {
-                    const key = `${group.tag}/${name}`
-                    return (
-                      <div
-                        key={key}
-                        className="group relative aspect-square overflow-hidden rounded-xl border bg-muted/20"
-                      >
-                        <img
-                          src={robotStickerFileUrl(group.tag, name)}
-                          alt={group.tag}
-                          loading="lazy"
-                          className="size-full object-cover"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(group.tag, name)}
-                          disabled={deletingKey === key}
-                          className="absolute right-1 top-1 rounded-full bg-background/80 p-1 opacity-0 transition-opacity group-hover:opacity-100"
-                        >
-                          {deletingKey === key ? (
-                            <Loader2 className="size-3.5 animate-spin" />
-                          ) : (
-                            <Trash2 className="size-3.5" />
-                          )}
-                        </button>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
+              <Button
+                key={group.tag}
+                variant={openTag === group.tag ? "default" : "outline"}
+                className="rounded-full"
+                onClick={() => setOpenTag(group.tag)}
+              >
+                {group.tag}
+                <span className="ml-1 text-xs opacity-70">
+                  {group.files.length}
+                </span>
+              </Button>
             ))}
           </div>
         )}
       </CardContent>
+
+      <Dialog open={Boolean(openTag)} onOpenChange={(open) => !open && setOpenTag("")}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{openTag}</DialogTitle>
+            <DialogDescription>
+              {activeGroup?.files.length ?? 0}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid max-h-[60vh] grid-cols-3 gap-3 overflow-y-auto sm:grid-cols-4">
+                {(activeGroup?.files ?? []).map((name) => {
+                  const key = `${openTag}/${name}`
+                  return (
+                    <div
+                      key={key}
+                      className="group relative aspect-square overflow-hidden rounded-xl border bg-muted/20"
+                    >
+                      <img
+                        src={robotStickerFileUrl(openTag, name)}
+                        alt={openTag}
+                        loading="lazy"
+                        className="size-full object-cover"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(openTag, name)}
+                        disabled={deletingKey === key}
+                        className="absolute right-1 top-1 rounded-full bg-background/80 p-1 opacity-0 transition-opacity group-hover:opacity-100"
+                      >
+                        {deletingKey === key ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="size-3.5" />
+                        )}
+                      </button>
+                    </div>
+                  )
+                })}
+          </div>
+        </DialogContent>
+      </Dialog>
     </Card>
   )
 }

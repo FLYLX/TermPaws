@@ -224,6 +224,16 @@ export async function deleteRobotSticker(tag: string, name: string) {
   )
 }
 
+export async function uploadRobotSticker(tag: string, file: File) {
+  const form = new FormData()
+  form.append("tag", tag)
+  form.append("file", file)
+  return apiRequest<{ tag: string; name: string }>("/api/v1/robots/stickers", {
+    method: "POST",
+    body: form,
+  })
+}
+
 export async function readRobot(robotId: string) {
   return apiRequest<RobotRecord>(`/api/v1/robots/${robotId}`)
 }

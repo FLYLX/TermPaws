@@ -1847,6 +1847,19 @@ function StickerLibraryPanel({ robotId }: { robotId: string }) {
   const totalCount = groups.reduce((sum, group) => sum + group.files.length, 0)
   const activeGroup = groups.find((group) => group.tag === openTag)
 
+  useEffect(() => {
+    if (groups.length === 0) {
+      return
+    }
+    if (!openTag) {
+      setOpenTag(groups[0].tag)
+      return
+    }
+    if (!groups.some((group) => group.tag === openTag)) {
+      setOpenTag(groups[0].tag)
+    }
+  }, [groups, openTag])
+
   const refresh = () =>
     queryClient.invalidateQueries({
       queryKey: getRobotStickersQueryKey(robotId),
@@ -1935,34 +1948,27 @@ function StickerLibraryPanel({ robotId }: { robotId: string }) {
             {copy.stickerEmpty}
           </div>
         ) : (
-          <div className="flex flex-wrap gap-2">
-            {groups.map((group) => (
-              <Button
-                key={group.tag}
-                variant={openTag === group.tag ? "default" : "outline"}
-                className="rounded-full"
-                onClick={() => setOpenTag(group.tag)}
-              >
-                {group.tag}
-                <span className="ml-1 text-xs opacity-70">
-                  {group.files.length}
-                </span>
-              </Button>
-            ))}
-          </div>
-        )}
-      </CardContent>
-
-      <Dialog open={Boolean(openTag)} onOpenChange={(open) => !open && setOpenTag("")}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{openTag}</DialogTitle>
-            <DialogDescription>
-              {activeGroup?.files.length ?? 0}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid max-h-[60vh] grid-cols-3 gap-3 overflow-y-auto sm:grid-cols-4">
-                {(activeGroup?.files ?? []).map((name) => {
+          <div className="grid gap-3">
+            <div className="flex flex-wrap gap-2">
+              {groups.map((group) => (
+                <Button
+                  key={group.tag}
+                  variant={openTag === group.tag ? "default" : "outline"}
+                  className="rounded-full"
+                  onClick={() =>
+                    setOpenTag(openTag === group.tag ? "" : group.tag)
+                  }
+                >
+                  {group.tag}
+                  <span className="ml-1 text-xs opacity-70">
+                    {group.files.length}
+                  </span>
+                </Button>
+              ))}
+            </div>
+            {openTag && activeGroup ? (
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
+                {activeGroup.files.map((name) => {
                   const key = `${openTag}/${name}`
                   return (
                     <div
@@ -1990,9 +1996,11 @@ function StickerLibraryPanel({ robotId }: { robotId: string }) {
                     </div>
                   )
                 })}
+              </div>
+            ) : null}
           </div>
-        </DialogContent>
-      </Dialog>
+        )}
+      </CardContent>
     </Card>
   )
 }

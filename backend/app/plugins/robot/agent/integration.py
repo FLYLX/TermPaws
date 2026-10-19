@@ -436,6 +436,11 @@ class RobotAgentIntegration:
                 f"\n- stickers available: {tags_line}"
                 "（send_message 带 sticker_tag=标签名 随机发一张；不带就不发图）"
             )
+        else:
+            reply_context_summary += (
+                "\n- stickers: 表情库暂时是空的（群友发的梗图会自动收进来，"
+                "攒到就有了，现在别硬发图）"
+            )
         agent_context.robot_reply_context_summary = reply_context_summary
         agent_context.robot_mcp_server_transient = False
         return True

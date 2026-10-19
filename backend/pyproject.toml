@@ -1,6 +1,6 @@
 [project]
 name = "termpaws-backend"
-version = "0.9.31"
+version = "0.9.32"
 description = "TermPaws backend server (FastAPI + embedded robot bridge)"
 requires-python = ">=3.10,<4.0"
 dependencies = [
@@ -28,6 +28,7 @@ dependencies = [
     "pyjwt<3.0.0,>=2.8.0",
     "pwdlib[argon2,bcrypt]>=0.3.0",
     "litellm>=1.0.0,!=1.82.7,!=1.82.8",
+    "mcp>=1.0.0",
     "pyyaml>=6.0.0",
     "fastembed>=0.4.0",
     "chromadb>=0.4.0",
